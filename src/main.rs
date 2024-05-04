@@ -30,6 +30,60 @@ async fn main() {
     }
 }
 
+async fn handle_connection(context: &mut Context, mut stream: TcpStream) {
+    println!("Processing in namespace: {:?}", context.namespace);
+
+    let mut buffer = [0; 1024];
+    loop {
+        let response = match stream.read(&mut buffer).await {
+            Ok(bytes_read) => {
+                // if nothing read, then reached EOF
+                if bytes_read == 0 {
+                    eprintln!("Connection reached EOF");
+                    break;
+                }
+
+                // only convert part of buffer with data read in!
+                let request = &buffer[..bytes_read];
+                println!("Received request: {:?}", request);
+
+                match RedisProtocolParser::parse_resp(request) {
+                    Ok((resp, left)) => {
+                        println!("Parsed request. resp: {:?}, left: {:?}", resp, left);
+
+                        let resp_str = resp_to_string(resp);
+
+                        println!("RESP String: {}", resp_str);
+
+                        handle_resp(&resp_str)
+                    }
+                    Err(e) => {
+                        eprintln!("Error parsing RESP: {}", e);
+                        "".to_string()
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Failed to read from connection: {}", e);
+
+                "".to_string()
+            }
+        };
+
+        println!("Server Response: {}", response);
+
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.flush().await.unwrap();
+    }
+}
+
+fn handle_resp(resp_str: &str) -> String {
+    match resp_str {
+        "PING" => "+PONG\r\n".to_string(),
+        _ => "".to_string(),
+    }
+}
+
 fn resp_to_string(resp: RESP) -> String {
     match resp {
         RESP::String(s) => {
@@ -58,50 +112,4 @@ fn resp_to_string(resp: RESP) -> String {
             "".to_string()
         }
     }
-}
-
-fn handle_resp(resp_str: &str) -> String {
-    match resp_str {
-        "PING" => "+PONG\r\n".to_string(),
-        _ => "".to_string(),
-    }
-}
-
-async fn handle_connection(context: &mut Context, mut stream: TcpStream) {
-    println!("Processing in namespace: {:?}", context.namespace);
-
-    let mut buffer = [0; 1024];
-    let response = match stream.read(&mut buffer).await {
-        Ok(bytes_read) => {
-            // only convert part of buffer with data read in!
-            let request = &buffer[..bytes_read];
-            println!("Received request: {:?}", request);
-
-            match RedisProtocolParser::parse_resp(request) {
-                Ok((resp, left)) => {
-                    println!("Parsed request. resp: {:?}, left: {:?}", resp, left);
-
-                    let resp_str = resp_to_string(resp);
-
-                    println!("RESP String: {}", resp_str);
-
-                    handle_resp(&resp_str)
-                }
-                Err(e) => {
-                    eprintln!("Error parsing RESP: {}", e);
-                    "".to_string()
-                }
-            }
-        }
-        Err(e) => {
-            println!("Failed to read from connection: {}", e);
-
-            "".to_string()
-        }
-    };
-
-    println!("Server Response: {}", response);
-
-    stream.write_all(response.as_bytes()).await.unwrap();
-    stream.flush().await.unwrap();
 }
