@@ -78,9 +78,21 @@ async fn handle_connection(context: &mut Context, mut stream: TcpStream) {
 }
 
 fn handle_resp(resp_str: &str) -> String {
-    match resp_str {
+    println!("handling resp str: {}", resp_str);
+
+    let parts: Vec<&str> = resp_str.split_whitespace().collect();
+    let command = parts[0];
+    let arguments = parts[1..].join(" ");
+    match command.to_ascii_uppercase().as_ref() {
         "PING" => "+PONG\r\n".to_string(),
-        _ => "".to_string(),
+        "ECHO" => {
+            format!("${}\r\n{}\r\n", arguments.len(), arguments)
+        }
+        // Add more commands and their respective handling here
+        _ => {
+            eprintln!("No implementation for resp request: {}", resp_str);
+            "-ERR unknown command\r\n".to_string()
+        }
     }
 }
 
