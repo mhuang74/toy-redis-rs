@@ -148,11 +148,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "redis-protocol-parser"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61700ef50f8aa1bf3206e51a5cfae5addda883f1363f369cc43ca10d86279c68"
+
+[[package]]
 name = "redis-starter-rust"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "redis-protocol-parser",
  "thiserror",
  "tokio",
 ]
