@@ -62,6 +62,7 @@ async fn main() {
         const REPL_CONF_PORT: &str =
             "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6380\r\n";
         const REPL_CONF_CAPABILITY: &str = "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n";
+        const REPL_CONF_PSYNC: &str = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
 
         let mut master_stream = TcpStream::connect(format!("{}:{}", master.hostname, master.port))
             .await
@@ -104,6 +105,11 @@ async fn main() {
 
         // REPLCONF to set capability
         send_master_and_wait_for_response(&mut master_stream, REPL_CONF_CAPABILITY)
+            .await
+            .unwrap();
+
+        // PSYNC
+        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PSYNC)
             .await
             .unwrap();
     }
