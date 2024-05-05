@@ -1,5 +1,8 @@
 use redis_protocol_parser::{RedisProtocolParser, RESP};
 use std::collections::HashMap;
+use std::ops::Add;
+use std::time::Duration;
+use std::time::SystemTime;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -9,7 +12,7 @@ use tokio::net::TcpStream;
 #[derive(Clone)]
 struct Context {
     namespace: Option<String>,
-    store: HashMap<Vec<u8>, Vec<u8>>,
+    store: HashMap<Vec<u8>, (Vec<u8>, Option<SystemTime>)>,
 }
 
 #[tokio::main]
@@ -122,8 +125,8 @@ fn handle_resp(context: &mut Context, resp: RESP) -> String {
 
 fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&[u8]>>) -> String {
     match command {
-        b"PING" => "+PONG\r\n".to_string(),
-        b"ECHO" => {
+        b"PING" | b"ping" | b"Ping" => "+PONG\r\n".to_string(),
+        b"ECHO" | b"echo" | b"Echo" => {
             // respond via BulkString
             let arg = arguments
                 .first()
@@ -131,7 +134,7 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                 .expect("Missing message for ECHO");
             format!("${}\r\n{}\r\n", arg.len(), String::from_utf8_lossy(arg))
         }
-        b"SET" => {
+        b"SET" | b"set" | b"Set" => {
             let key = arguments
                 .first()
                 .expect("Expecting KEY for SET command")
@@ -141,18 +144,59 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                 .expect("Expecting VAL for SET command")
                 .expect("Invalid VAL for SET");
 
-            context.store.insert(key.to_vec(), val.to_vec());
+            if let Some(Some(expirary_arg)) = arguments.get(2) {
+                let duration = match expirary_arg.to_vec().as_slice() {
+                    b"PX" | b"px" | b"Px" => arguments
+                        .get(3)
+                        .and_then(|&x| x)
+                        .and_then(|x| String::from_utf8_lossy(x).parse::<u64>().ok())
+                        .map(Duration::from_millis),
+                    b"EX" | b"ex" | b"Ex" => arguments
+                        .get(3)
+                        .and_then(|&x| x)
+                        .and_then(|x| String::from_utf8_lossy(x).parse::<u64>().ok())
+                        .map(Duration::from_secs),
+                    _ => None,
+                };
+                let expiry = duration.map(|dur| SystemTime::now().add(dur));
+
+                println!(
+                    "Adding key '{}' with expiration duration {:?} expiring at {:?}",
+                    String::from_utf8_lossy(key),
+                    duration,
+                    expiry
+                );
+
+                context.store.insert(key.to_vec(), (val.to_vec(), expiry));
+            } else {
+                context.store.insert(key.to_vec(), (val.to_vec(), None));
+            }
 
             "+OK\r\n".to_string()
         }
-        b"GET" => {
+        b"GET" | b"get" | b"Get" => {
             let key = arguments
                 .first()
                 .expect("Expecting KEY for GET command")
                 .expect("Invalid KEY for GET");
 
             match context.store.get(key) {
-                Some(val) => format!("${}\r\n{}\r\n", val.len(), String::from_utf8_lossy(val)),
+                Some((val, None)) => {
+                    format!("${}\r\n{}\r\n", val.len(), String::from_utf8_lossy(val))
+                }
+                Some((val, Some(expiry))) => {
+                    if SystemTime::now() > *expiry {
+                        println!(
+                            "KEY '{}' expired at {:?}",
+                            String::from_utf8_lossy(key),
+                            expiry
+                        );
+                        context.store.remove(key);
+                        "$-1\r\n".to_string()
+                    } else {
+                        format!("${}\r\n{}\r\n", val.len(), String::from_utf8_lossy(val))
+                    }
+                }
                 None => "$-1\r\n".to_string(),
             }
         }
