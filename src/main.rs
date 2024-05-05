@@ -64,14 +64,16 @@ async fn main() {
     };
 
     // set up replication
-    setup_replication(context.clone()).await.expect("Error setting up replication");
+    setup_replication(context.clone())
+        .await
+        .expect("Error setting up replication");
 
     // bind to listening port
     let server_address = format!("127.0.0.1:{}", cli.port);
 
     let listener = TcpListener::bind(&server_address)
         .await
-        .expect(format!("Unable to bind to server address: {}", &server_address).as_str());
+        .unwrap_or_else(|_| panic!("Unable to bind to server address: {}", &server_address));
 
     println!("Server started at address: {}", &server_address);
 
@@ -127,20 +129,16 @@ async fn setup_replication(context: Context) -> Result<()> {
         }
 
         // PING
-        send_master_and_wait_for_response(&mut master_stream, PING)
-            .await?;
+        send_master_and_wait_for_response(&mut master_stream, PING).await?;
 
         // REPLCONF to set listening port
-        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PORT)
-            .await?;
+        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PORT).await?;
 
         // REPLCONF to set capability
-        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_CAPABILITY)
-            .await?;
+        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_CAPABILITY).await?;
 
         // PSYNC
-        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PSYNC)
-            .await?;
+        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PSYNC).await?;
     }
 
     Ok(())
@@ -331,9 +329,20 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                 "-ERR unknown command\r\n".to_string()
             }
         }
-        b"REPLCONF" | b"replconf" | b"Replconf" => {
-            "+OK\r\n".to_string()
-        } 
+        b"REPLCONF" | b"replconf" | b"Replconf" => "+OK\r\n".to_string(),
+        b"PSYNC" | b"psync" | b"Psync" => {
+            format!(
+                "+FULLRESYNC {} {}\r\n",
+                context
+                    .master_replid
+                    .as_ref()
+                    .expect("Missing master repl id"),
+                context
+                    .master_repl_offset
+                    .as_ref()
+                    .expect("Missing master repl offset")
+            )
+        }
         // Add more commands and their respective handling here
         _ => {
             eprintln!(
