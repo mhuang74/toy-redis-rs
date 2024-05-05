@@ -56,8 +56,41 @@ async fn main() {
         }
     });
 
+    let context = Context {
+        replicaof: replica_master,
+        master_replid: Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string()),
+        master_repl_offset: Some(0),
+        store: HashMap::new(),
+    };
+
     // set up replication
-    if let Some(master) = &replica_master {
+    setup_replication(context.clone()).await.expect("Error setting up replication");
+
+    // bind to listening port
+    let server_address = format!("127.0.0.1:{}", cli.port);
+
+    let listener = TcpListener::bind(&server_address)
+        .await
+        .expect(format!("Unable to bind to server address: {}", &server_address).as_str());
+
+    println!("Server started at address: {}", &server_address);
+
+    // start main loop
+    loop {
+        let (stream, addr) = listener.accept().await.unwrap();
+        let context = context.clone();
+        tokio::spawn(async move {
+            println!("accepted new connection from: {:?}", addr);
+
+            handle_connection(context, stream)
+                .await
+                .expect("Error handling input from connection");
+        });
+    }
+}
+
+async fn setup_replication(context: Context) -> Result<()> {
+    if let Some(master) = context.replicaof {
         const PING: &str = "*1\r\n$4\r\nPING\r\n";
         const REPL_CONF_PORT: &str =
             "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6380\r\n";
@@ -95,52 +128,25 @@ async fn main() {
 
         // PING
         send_master_and_wait_for_response(&mut master_stream, PING)
-            .await
-            .unwrap();
+            .await?;
 
         // REPLCONF to set listening port
         send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PORT)
-            .await
-            .unwrap();
+            .await?;
 
         // REPLCONF to set capability
         send_master_and_wait_for_response(&mut master_stream, REPL_CONF_CAPABILITY)
-            .await
-            .unwrap();
+            .await?;
 
         // PSYNC
         send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PSYNC)
-            .await
-            .unwrap();
+            .await?;
     }
 
-    let context = Context {
-        replicaof: replica_master,
-        master_replid: Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string()),
-        master_repl_offset: Some(0),
-        store: HashMap::new(),
-    };
-
-    println!("Listening on port: {}", cli.port);
-
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port))
-        .await
-        .unwrap();
-
-    loop {
-        let (stream, addr) = listener.accept().await.unwrap();
-        let mut context = context.clone();
-        tokio::spawn(async move {
-            println!("accepted new connection from: {:?}", addr);
-
-            handle_connection(&mut context, stream)
-                .await
-                .expect("Error handling input from connection");
-        });
-    }
+    Ok(())
 }
 
-async fn handle_connection(context: &mut Context, mut stream: TcpStream) -> Result<()> {
+async fn handle_connection(mut context: Context, mut stream: TcpStream) -> Result<()> {
     let mut buffer = [0; 1024];
     loop {
         let bytes_read = stream.read(&mut buffer).await?;
@@ -162,7 +168,7 @@ async fn handle_connection(context: &mut Context, mut stream: TcpStream) -> Resu
         let (resp, _) = RedisProtocolParser::parse_resp(request)
             .map_err(|e| anyhow!("Error parsing RESP: {}", e))?;
 
-        let response = handle_resp(context, resp);
+        let response = handle_resp(&mut context, resp);
 
         println!(
             "Server Response: {}",
@@ -325,6 +331,9 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                 "-ERR unknown command\r\n".to_string()
             }
         }
+        b"REPLCONF" | b"replconf" | b"Replconf" => {
+            "+OK\r\n".to_string()
+        } 
         // Add more commands and their respective handling here
         _ => {
             eprintln!(
