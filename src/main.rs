@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use redis_protocol_parser::{RedisProtocolParser, RESP};
 use std::collections::HashMap;
@@ -42,9 +43,6 @@ struct Context {
 
 #[tokio::main]
 async fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
-
     let cli = Cli::parse();
 
     // Parse the replicaof argument into a ReplicaMaster if provided
@@ -58,24 +56,56 @@ async fn main() {
         }
     });
 
-    println!("Listening on port: {}", cli.port);
-
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port))
-        .await
-        .unwrap();
-
     // set up replication
     if let Some(master) = &replica_master {
-        println!("PING replica master: {}:{}", master.hostname, master.port);
+        const PING: &str = "*1\r\n$4\r\nPING\r\n";
+        const REPL_CONF_PORT: &str =
+            "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6380\r\n";
+        const REPL_CONF_CAPABILITY: &str = "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n";
 
         let mut master_stream = TcpStream::connect(format!("{}:{}", master.hostname, master.port))
             .await
             .expect("Failed to connect to the master");
 
-        master_stream
-            .write_all("*1\r\n$4\r\nPING\r\n".as_bytes())
+        println!(
+            "Connected to replica master at {}:{}. Setting up replication...",
+            master.hostname, master.port
+        );
+
+        async fn send_master_and_wait_for_response(
+            stream: &mut TcpStream,
+            message: &str,
+        ) -> Result<()> {
+            let mut buffer: [u8; 1024] = [0; 1024];
+
+            stream
+                .write_all(message.as_bytes())
+                .await
+                .expect("Failed to send message to the master");
+
+            let bytes_read = stream.read(&mut buffer).await?;
+
+            // only convert part of buffer with data read in!
+            let reply = &buffer[..bytes_read];
+            println!("Received reply: {}", String::from_utf8_lossy(reply));
+
+            Ok(())
+        }
+
+        // PING
+        send_master_and_wait_for_response(&mut master_stream, PING)
             .await
-            .expect("Failed to send PING to the master");
+            .unwrap();
+
+        // REPLCONF to set listening port
+        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_PORT)
+            .await
+            .unwrap();
+
+        // REPLCONF to set capability
+        send_master_and_wait_for_response(&mut master_stream, REPL_CONF_CAPABILITY)
+            .await
+            .unwrap();
     }
 
     let context = Context {
@@ -85,56 +115,58 @@ async fn main() {
         store: HashMap::new(),
     };
 
+    println!("Listening on port: {}", cli.port);
+
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port))
+        .await
+        .unwrap();
+
     loop {
-        let (socket, addr) = listener.accept().await.unwrap();
+        let (stream, addr) = listener.accept().await.unwrap();
         let mut context = context.clone();
         tokio::spawn(async move {
             println!("accepted new connection from: {:?}", addr);
 
-            handle_connection(&mut context, socket).await;
+            handle_connection(&mut context, stream)
+                .await
+                .expect("Error handling input from connection");
         });
     }
 }
 
-async fn handle_connection(context: &mut Context, mut stream: TcpStream) {
+async fn handle_connection(context: &mut Context, mut stream: TcpStream) -> Result<()> {
     let mut buffer = [0; 1024];
     loop {
-        let response = match stream.read(&mut buffer).await {
-            Ok(bytes_read) => {
-                // if nothing read, then reached EOF
-                if bytes_read == 0 {
-                    eprintln!("Connection reached EOF");
-                    break;
-                }
+        let bytes_read = stream.read(&mut buffer).await?;
 
-                // only convert part of buffer with data read in!
-                let request = &buffer[..bytes_read];
-                println!("Received request: {:?}", request);
+        if bytes_read == 0 {
+            eprintln!("Connection reached EOF");
+            break;
+        }
 
-                match RedisProtocolParser::parse_resp(request) {
-                    Ok((resp, left)) => {
-                        println!("Parsed request. resp: {:?}, left: {:?}", resp, left);
+        // only convert part of buffer with data read in!
+        let request = &buffer[..bytes_read];
+        println!(
+            "Received request: {}",
+            String::from_utf8_lossy(request)
+                .replace('\r', "\\r")
+                .replace('\n', "\\n")
+        );
 
-                        handle_resp(context, resp)
-                    }
-                    Err(e) => {
-                        eprintln!("Error parsing RESP: {}", e);
-                        "".to_string()
-                    }
-                }
-            }
-            Err(e) => {
-                println!("Failed to read from connection: {}", e);
+        let (resp, _) = RedisProtocolParser::parse_resp(request)
+            .map_err(|e| anyhow!("Error parsing RESP: {}", e))?;
 
-                "-ERR connection error\r\n".to_string()
-            }
-        };
+        let response = handle_resp(context, resp);
 
-        println!("Server Response: {}", response);
+        println!(
+            "Server Response: {}",
+            response.replace('\r', "\\r").replace('\n', "\\n")
+        );
 
-        stream.write_all(response.as_bytes()).await.unwrap();
-        stream.flush().await.unwrap();
+        stream.write_all(response.as_bytes()).await?;
+        stream.flush().await?;
     }
+    Ok(())
 }
 
 fn handle_resp(context: &mut Context, resp: RESP) -> String {
