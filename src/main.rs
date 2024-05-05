@@ -221,6 +221,19 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                 None => "$-1\r\n".to_string(),
             }
         }
+        b"INFO" | b"info" | b"Info" => {
+            if let Some(Some(category_arg)) = arguments.first() {
+                match category_arg.to_vec().as_slice() {
+                    b"REPLICATION" | b"replication" | b"Replication" => {
+                        // only support MASTER role for now
+                        "$11\r\nrole:master\r\n".to_string()
+                    }
+                    _ => "-ERR unknown command\r\n".to_string(),
+                }
+            } else {
+                "-ERR unknown command\r\n".to_string()
+            }
+        }
         // Add more commands and their respective handling here
         _ => {
             eprintln!(
