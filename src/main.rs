@@ -27,6 +27,7 @@ async fn main() {
         .enumerate()
         .find_map(|(i, arg)| {
             if arg == "--port" {
+                // get the port number from the immediately following arg
                 args.get(i + 1).map(|s| s.as_str())
             } else {
                 None
