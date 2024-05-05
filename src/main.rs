@@ -35,6 +35,8 @@ struct ReplicaMaster {
 #[derive(Clone)]
 struct Context {
     replicaof: Option<ReplicaMaster>,
+    master_replid: Option<String>,
+    master_repl_offset: Option<usize>,
     store: HashMap<Vec<u8>, (Vec<u8>, Option<SystemTime>)>,
 }
 
@@ -60,6 +62,8 @@ async fn main() {
 
     let context = Context {
         replicaof: replica_master,
+        master_replid: Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string()),
+        master_repl_offset: Some(0),
         store: HashMap::new(),
     };
 
@@ -242,16 +246,26 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
             if let Some(Some(category_arg)) = arguments.first() {
                 match category_arg.to_vec().as_slice() {
                     b"REPLICATION" | b"replication" | b"Replication" => {
-                        let role_str = if let Some(m) = &context.replicaof {
+                        let bulk_str = if let Some(m) = &context.replicaof {
                             // this is a replica
                             println!("This is a replica to: {}:{}", m.hostname, m.port);
-                            "role:slave"
+                            "role:slave".to_string()
                         } else {
                             // not a replica
-                            "role:master"
+                            format!(
+                                "role:master\nmaster_replid:{}\nmaster_repl_offset:{}",
+                                context
+                                    .master_replid
+                                    .as_ref()
+                                    .expect("Missiing master repl id"),
+                                context
+                                    .master_repl_offset
+                                    .as_ref()
+                                    .expect("Missing master repl offset")
+                            )
                         };
 
-                        format!("${}\r\n{}\r\n", role_str.len(), role_str)
+                        format!("${}\r\n{}\r\n", bulk_str.len(), bulk_str)
                     }
                     _ => "-ERR unknown command\r\n".to_string(),
                 }
