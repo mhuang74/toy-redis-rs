@@ -47,8 +47,6 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    println!("Listening on port: {}", cli.port);
-
     // Parse the replicaof argument into a ReplicaMaster if provided
     let replica_master = cli.replicaof.map(|values| {
         if values.len() == 2 {
@@ -60,16 +58,32 @@ async fn main() {
         }
     });
 
+    println!("Listening on port: {}", cli.port);
+
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port))
+        .await
+        .unwrap();
+
+    // set up replication
+    if let Some(master) = &replica_master {
+        println!("PING replica master: {}:{}", master.hostname, master.port);
+
+        let mut master_stream = TcpStream::connect(format!("{}:{}", master.hostname, master.port))
+            .await
+            .expect("Failed to connect to the master");
+
+        master_stream
+            .write_all("*1\r\n$4\r\nPING\r\n".as_bytes())
+            .await
+            .expect("Failed to send PING to the master");
+    }
+
     let context = Context {
         replicaof: replica_master,
         master_replid: Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string()),
         master_repl_offset: Some(0),
         store: HashMap::new(),
     };
-
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port))
-        .await
-        .unwrap();
 
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
