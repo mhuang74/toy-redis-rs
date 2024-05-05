@@ -20,12 +20,32 @@ async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
+    use std::env;
+    let args: Vec<String> = env::args().collect();
+    let port = args
+        .iter()
+        .enumerate()
+        .find_map(|(i, arg)| {
+            if arg == "--port" {
+                args.get(i + 1).map(|s| s.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| {
+            eprintln!("Usage: --port <number>");
+            "6379"
+        });
+    println!("Listening on port: {}", &port);
+
     let context = Context {
         namespace: None,
         store: HashMap::new(),
     };
 
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
 
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
