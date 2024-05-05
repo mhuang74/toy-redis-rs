@@ -1,3 +1,4 @@
+use clap::Parser;
 use redis_protocol_parser::{RedisProtocolParser, RESP};
 use std::collections::HashMap;
 use std::ops::Add;
@@ -8,10 +9,32 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+#[command(propagate_version = true)]
+struct Cli {
+    /// Turn debugging information on
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Replicaof in the format 'hostname port'
+    #[arg(long, number_of_values = 2)]
+    replicaof: Option<Vec<String>>,
+
+    /// Port number
+    #[arg(short, long, default_value_t = 6379)]
+    port: usize,
+}
+#[derive(Clone)]
+struct ReplicaMaster {
+    hostname: String,
+    port: usize,
+}
+
 // use String to pass Context across async boundaries
 #[derive(Clone)]
 struct Context {
-    namespace: Option<String>,
+    replicaof: Option<ReplicaMaster>,
     store: HashMap<Vec<u8>, (Vec<u8>, Option<SystemTime>)>,
 }
 
@@ -20,31 +43,27 @@ async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
-    use std::env;
-    let args: Vec<String> = env::args().collect();
-    let port = args
-        .iter()
-        .enumerate()
-        .find_map(|(i, arg)| {
-            if arg == "--port" {
-                // get the port number from the immediately following arg
-                args.get(i + 1).map(|s| s.as_str())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| {
-            eprintln!("Usage: --port <number>");
-            "6379"
-        });
-    println!("Listening on port: {}", &port);
+    let cli = Cli::parse();
+
+    println!("Listening on port: {}", cli.port);
+
+    // Parse the replicaof argument into a ReplicaMaster if provided
+    let replica_master = cli.replicaof.map(|values| {
+        if values.len() == 2 {
+            let hostname = values[0].clone();
+            let port = values[1].parse::<usize>().expect("Invalid port number");
+            ReplicaMaster { hostname, port }
+        } else {
+            panic!("Expected hostname and port for --replicaof");
+        }
+    });
 
     let context = Context {
-        namespace: None,
+        replicaof: replica_master,
         store: HashMap::new(),
     };
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port))
         .await
         .unwrap();
 
@@ -60,8 +79,6 @@ async fn main() {
 }
 
 async fn handle_connection(context: &mut Context, mut stream: TcpStream) {
-    println!("Processing in namespace: {:?}", context.namespace);
-
     let mut buffer = [0; 1024];
     loop {
         let response = match stream.read(&mut buffer).await {
@@ -225,8 +242,16 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
             if let Some(Some(category_arg)) = arguments.first() {
                 match category_arg.to_vec().as_slice() {
                     b"REPLICATION" | b"replication" | b"Replication" => {
-                        // only support MASTER role for now
-                        "$11\r\nrole:master\r\n".to_string()
+                        let role_str = if let Some(m) = &context.replicaof {
+                            // this is a replica
+                            println!("This is a replica to: {}:{}", m.hostname, m.port);
+                            "role:slave"
+                        } else {
+                            // not a replica
+                            "role:master"
+                        };
+
+                        format!("${}\r\n{}\r\n", role_str.len(), role_str)
                     }
                     _ => "-ERR unknown command\r\n".to_string(),
                 }
