@@ -166,20 +166,26 @@ async fn handle_connection(mut context: Context, mut stream: TcpStream) -> Resul
         let (resp, _) = RedisProtocolParser::parse_resp(request)
             .map_err(|e| anyhow!("Error parsing RESP: {}", e))?;
 
-        let response = handle_resp(&mut context, resp);
+        let responses = handle_resp(&mut context, resp);
 
-        println!(
-            "Server Response: {}",
-            response.replace('\r', "\\r").replace('\n', "\\n")
-        );
+        for response in responses {
+            println!(
+                "Server Response: {}",
+                String::from_utf8_lossy(&response)
+                    .replace('\r', "\\r")
+                    .replace('\n', "\\n")
+            );
 
-        stream.write_all(response.as_bytes()).await?;
-        stream.flush().await?;
+            stream.write_all(&response).await?;
+            stream.flush().await?;
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
     }
     Ok(())
 }
 
-fn handle_resp(context: &mut Context, resp: RESP) -> String {
+fn handle_resp(context: &mut Context, resp: RESP) -> Vec<Vec<u8>> {
     println!("handling resp: {:?}", &resp);
 
     match resp {
@@ -211,26 +217,30 @@ fn handle_resp(context: &mut Context, resp: RESP) -> String {
             if let Some(cmd) = command {
                 handle_command(context, cmd, arguments)
             } else {
-                "-ERR missing command\r\n".to_string()
+                vec!["-ERR missing command\r\n".to_string().into_bytes()]
             }
         }
         _ => {
             println!("Unsupported RESP type");
-            "-ERR Unsupported RESP type\r\n".to_string()
+            vec!["-ERR Unsupported RESP type\r\n".to_string().into_bytes()]
         }
     }
 }
 
-fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&[u8]>>) -> String {
+fn handle_command<'a>(
+    context: &mut Context,
+    command: &'a [u8],
+    arguments: Vec<Option<&'a [u8]>>,
+) -> Vec<Vec<u8>> {
     match command {
-        b"PING" | b"ping" | b"Ping" => "+PONG\r\n".to_string(),
+        b"PING" | b"ping" | b"Ping" => vec!["+PONG\r\n".to_string().into_bytes()],
         b"ECHO" | b"echo" | b"Echo" => {
             // respond via BulkString
             let arg = arguments
                 .first()
                 .expect("Expecting arg")
                 .expect("Missing message for ECHO");
-            format!("${}\r\n{}\r\n", arg.len(), String::from_utf8_lossy(arg))
+            vec![format!("${}\r\n{}\r\n", arg.len(), String::from_utf8_lossy(arg)).into_bytes()]
         }
         b"SET" | b"set" | b"Set" => {
             let key = arguments
@@ -270,7 +280,7 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                 context.store.insert(key.to_vec(), (val.to_vec(), None));
             }
 
-            "+OK\r\n".to_string()
+            vec!["+OK\r\n".to_string().into_bytes()]
         }
         b"GET" | b"get" | b"Get" => {
             let key = arguments
@@ -280,7 +290,10 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
 
             match context.store.get(key) {
                 Some((val, None)) => {
-                    format!("${}\r\n{}\r\n", val.len(), String::from_utf8_lossy(val))
+                    vec![
+                        format!("${}\r\n{}\r\n", val.len(), String::from_utf8_lossy(val))
+                            .into_bytes(),
+                    ]
                 }
                 Some((val, Some(expiry))) => {
                     if SystemTime::now() > *expiry {
@@ -290,19 +303,23 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                             expiry
                         );
                         context.store.remove(key);
-                        "$-1\r\n".to_string()
+                        vec!["$-1\r\n".to_string().into_bytes()]
                     } else {
-                        format!("${}\r\n{}\r\n", val.len(), String::from_utf8_lossy(val))
+                        vec![
+                            format!("${}\r\n{}\r\n", val.len(), String::from_utf8_lossy(val))
+                                .to_string()
+                                .into_bytes(),
+                        ]
                     }
                 }
-                None => "$-1\r\n".to_string(),
+                None => vec!["$-1\r\n".to_string().into_bytes()],
             }
         }
         b"INFO" | b"info" | b"Info" => {
             if let Some(Some(category_arg)) = arguments.first() {
                 match category_arg.to_vec().as_slice() {
                     b"REPLICATION" | b"replication" | b"Replication" => {
-                        let bulk_str = if let Some(m) = &context.replicaof {
+                        let bulk_str: String = if let Some(m) = &context.replicaof {
                             // this is a replica
                             println!("This is a replica to: {}:{}", m.hostname, m.port);
                             "role:slave".to_string()
@@ -321,27 +338,42 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                             )
                         };
 
-                        format!("${}\r\n{}\r\n", bulk_str.len(), bulk_str)
+                        vec![format!("${}\r\n{}\r\n", bulk_str.len(), bulk_str).into_bytes()]
                     }
-                    _ => "-ERR unknown command\r\n".to_string(),
+                    _ => vec!["-ERR unknown command\r\n".to_string().into_bytes()],
                 }
             } else {
-                "-ERR unknown command\r\n".to_string()
+                vec!["-ERR unknown command\r\n".to_string().into_bytes()]
             }
         }
-        b"REPLCONF" | b"replconf" | b"Replconf" => "+OK\r\n".to_string(),
+        b"REPLCONF" | b"replconf" | b"Replconf" => vec!["+OK\r\n".to_string().into_bytes()],
         b"PSYNC" | b"psync" | b"Psync" => {
-            format!(
-                "+FULLRESYNC {} {}\r\n",
-                context
-                    .master_replid
-                    .as_ref()
-                    .expect("Missing master repl id"),
-                context
-                    .master_repl_offset
-                    .as_ref()
-                    .expect("Missing master repl offset")
-            )
+            const EMPTY_RDB_FILE_HEX: &str = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
+
+            // Convert the hex string to bytes
+            let rdb_bytes = hex::decode(EMPTY_RDB_FILE_HEX).expect("Can't decode hex");
+            let mut rdb_response: Vec<u8> = Vec::new();
+            rdb_response.push(b'$');
+            rdb_response.extend_from_slice(rdb_bytes.len().to_string().as_bytes());
+            rdb_response.push(b'\r');
+            rdb_response.push(b'\n');
+            rdb_response.extend_from_slice(&rdb_bytes);
+
+            vec![
+                format!(
+                    "+FULLRESYNC {} {}\r\n",
+                    context
+                        .master_replid
+                        .as_ref()
+                        .expect("Missing master repl id"),
+                    context
+                        .master_repl_offset
+                        .as_ref()
+                        .expect("Missing master repl offset")
+                )
+                .into_bytes(),
+                rdb_response,
+            ]
         }
         // Add more commands and their respective handling here
         _ => {
@@ -349,7 +381,7 @@ fn handle_command(context: &mut Context, command: &[u8], arguments: Vec<Option<&
                 "No implementation for resp request: {}",
                 String::from_utf8_lossy(command)
             );
-            "-ERR unknown command\r\n".to_string()
+            vec!["-ERR unknown command\r\n".to_string().into_bytes()]
         }
     }
 }
