@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use anyhow::{Error, Result};
 use std::collections::VecDeque;
-use anyhow::{Result, Error};
+use std::sync::{Arc, Mutex};
 
 pub struct ReplicationLog {
     id: String,
@@ -20,7 +20,7 @@ impl ReplicationLog {
     pub fn push(&mut self, request: &[u8]) -> Result<(), Error> {
         let mut log = self.log_entries.lock().unwrap();
         log.push_back(request.to_vec());
-        self.offset+=1;
+        self.offset += 1;
         Ok(())
     }
 

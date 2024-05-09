@@ -9,8 +9,6 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn new() -> Self {
-        AppConfig {
-            replicaof: None,
-        }
+        AppConfig { replicaof: None }
     }
 }

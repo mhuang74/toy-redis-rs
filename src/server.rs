@@ -1,13 +1,13 @@
-use std::sync::{Arc, Mutex};
 use crate::replication_log::ReplicationLog;
 use crate::replication_log::ReplicationLogIterator;
+use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
-use tokio::net::TcpStream;
-use anyhow::{Result,Error,anyhow};
+use anyhow::{anyhow, Error, Result};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-
+use tokio::net::TcpStream;
 
 /// Used when Redis is started in Normal/Master Mode.
 /// * For Client connections, handles both READ and WRITE requests
@@ -25,26 +25,36 @@ impl Server {
         }
     }
 
-    pub async fn handle_connection(&self, addr: SocketAddr, mut stream: TcpStream) -> Result<(), Error> {
-
+    pub async fn handle_connection(
+        &self,
+        addr: SocketAddr,
+        mut stream: TcpStream,
+    ) -> Result<(), Error> {
         let mut buffer = [0; 1024];
         loop {
             let bytes_read = stream.read(&mut buffer).await?;
-    
+
             if bytes_read == 0 {
                 eprintln!("[{}]: Disconncted", addr);
                 break;
             }
-    
+
             // only convert part of buffer with data read in!
             let request = &buffer[..bytes_read];
             println!(
                 "[{}]: {}",
                 addr,
-                String::from_utf8_lossy(request)
-                    .replace('\r', "\\r")
-                    .replace('\n', "\\n")
+                RESPParser::bytes_to_escaped_string(request)
             );
+
+            match RESPParser::parse(request) {
+                Ok(req_vec) => {
+                    println!("Parsed request: {:?}", req_vec);
+                }
+                Err(e) => {
+                    eprintln!("Error parsing RESP: {}", e);
+                }
+            }
 
             // mock: response
             stream
@@ -58,9 +68,9 @@ impl Server {
                 let mut repl_log_guard = self.replication_log.lock().unwrap();
                 repl_log_guard.push(request)?;
             }
-    
-            // if replication handshake is confirmed, then enter into relay 
-            
+
+            // if replication handshake is confirmed, then enter into relay
+
             if setup_replication_relay(addr, &stream)? {
                 println!("Connection {} converted into Replica Relay Mode", addr);
 
@@ -76,20 +86,20 @@ impl Server {
                     entry = repl_iter.next();
 
                     if let Some(message) = entry {
-                        println!("relaying log: {:?}", String::from_utf8_lossy(&message).replace('\r', "\\r").replace('\n', "\\n"));
+                        println!(
+                            "relaying log: {:?}",
+                            RESPParser::bytes_to_escaped_string(&message)
+                        );
                         stream.write_all(&message).await?;
                     }
 
                     tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
-
                 }
             }
         }
-    
+
         Ok(())
     }
-
-
 }
 
 fn setup_replication_relay(addr: SocketAddr, stream: &TcpStream) -> Result<bool, Error> {
