@@ -1,6 +1,8 @@
+use crate::config::ReplicaMaster;
 use crate::replication_log::ReplicationLog;
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
+use crate::write_response;
 use anyhow::{anyhow, Error, Result};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -11,12 +13,13 @@ use tokio::net::TcpStream;
 /// Used when Redis is started in Replication Mode.
 /// * Only handles WRITE requests and does not respond.
 pub struct Replica {
+    master: ReplicaMaster,
     storage: Arc<Mutex<Storage>>,
 }
 
 impl Replica {
-    pub fn new(storage: Arc<Mutex<Storage>>) -> Self {
-        Replica { storage }
+    pub fn new(master: ReplicaMaster, storage: Arc<Mutex<Storage>>) -> Self {
+        Replica { master, storage }
     }
 
     pub async fn handle_connection(
@@ -30,6 +33,8 @@ impl Replica {
         const REPL_CONF_CAPABILITY: &str = "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n";
         const REPL_CONF_PSYNC: &str = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
 
+        let mut buffer = [0; 1024];
+
         // PING
         send_and_wait_for_response(&mut stream, PING).await?;
 
@@ -41,9 +46,11 @@ impl Replica {
 
         // PSYNC
         send_and_wait_for_response(&mut stream, REPL_CONF_PSYNC).await?;
+        // read in RDB file after PSYNC response
+        let bytes_read = stream.read(&mut buffer).await?;
+        println!("Received {} bytes of RDB file", bytes_read);
 
         // enter listening loop
-        let mut buffer = [0; 1024];
         loop {
             let bytes_read = stream.read(&mut buffer).await?;
 
@@ -60,16 +67,68 @@ impl Replica {
                 RESPParser::bytes_to_escaped_string(request)
             );
 
-            match RESPParser::parse(request) {
+            let request_vector = match RESPParser::parse(request) {
                 Ok(req_vec) => {
-                    println!("Parsed request: {:?}", req_vec);
+                    // println!("Parsed request: {:?}", req_vec);
+                    req_vec
                 }
                 Err(e) => {
                     eprintln!("Error parsing RESP: {}", e);
+                    continue; // Skip this iteration if there's an error
                 }
-            }
+            };
 
-            // TODO: write to storage
+            if let Some(command) = request_vector.first() {
+                match command.as_slice() {
+                    b"SET" | b"set" | b"Set" => {
+                        let set_args: [Option<&[u8]>; 4] = [
+                            request_vector.get(1).map(|x| x.as_slice()),
+                            request_vector.get(2).map(|x| x.as_slice()),
+                            request_vector.get(3).map(|x| x.as_slice()),
+                            request_vector.get(4).map(|x| x.as_slice()),
+                        ];
+                        match set_args {
+                            [Some(var), Some(val), None, None] => {
+                                let mut storage = self.storage.lock().unwrap();
+                                storage.set(var.to_vec(), val.to_vec(), None);
+                            }
+                            [Some(var), Some(val), Some(b"PX" | b"px"), Some(expiry)] => {
+                                use std::time::Duration;
+                                let expiry_duration = Duration::from_millis(
+                                    String::from_utf8_lossy(expiry)
+                                        .parse::<u64>()
+                                        .expect("Invalid expiry format"),
+                                );
+                                {
+                                    let mut storage = self.storage.lock().unwrap();
+                                    storage.set(var.to_vec(), val.to_vec(), Some(expiry_duration));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    b"INFO" | b"info" | b"Info" => {
+                        match request_vector.get(1).unwrap().as_slice() {
+                            b"REPLICATION" | b"replication" | b"Replication" => {
+                                let mut response_buffer = Vec::new();
+                                write_response!(
+                                    &mut stream,
+                                    &mut response_buffer,
+                                    vec!["role:slave".as_bytes()]
+                                );
+                            }
+                            _ => {
+                                eprintln!("Unsupported INFO subcommand");
+                            }
+                        }
+                    }
+                    _ => {
+                        eprintln!("Unsupported command: {}", String::from_utf8_lossy(command));
+                    }
+                }
+            } else {
+                eprintln!("Received an empty RESP request");
+            }
         }
 
         Ok(())

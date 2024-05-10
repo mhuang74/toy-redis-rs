@@ -2,29 +2,27 @@ use anyhow::{anyhow, Error};
 
 pub struct RESPParser;
 
-
 impl RESPParser {
     /// parse RESP encoded bytes into Vector of UTF strings
     pub fn parse(request: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
-        println!("About to parse: {}", RESPParser::bytes_to_escaped_string(request));
+        // println!("About to parse: {}", RESPParser::bytes_to_escaped_string(request));
 
         match parse_resp(request) {
             Ok((resp, _left)) => {
-            println!("Parsed into RESP: {:?}", resp);
+                println!("Parsed into: {:?}", resp);
 
                 RESPParser::resp_to_decoded_string(resp)
             }
-            Err(e) => {
-                Err(anyhow!("Error parsing RESP: {}", e))
-            }
+            Err(e) => Err(anyhow!("Error parsing RESP: {}", e)),
         }
     }
 
     /// turn RESP objects into Vector of RESP encoded bytes
     pub fn encode(resp_vec: Vec<Resp>) -> Result<Vec<Vec<u8>>, Error> {
-        
         let mut results = Vec::new();
-        resp_vec.into_iter().map(|r| r.write_to_writer(&mut results));
+        resp_vec
+            .into_iter()
+            .map(|r| r.write_to_writer(&mut results));
 
         Err(anyhow!("Error"))
     }
@@ -42,13 +40,21 @@ impl RESPParser {
 
                 Ok(nested_vecs.into_iter().flatten().collect())
             }
-            Resp::Error(s) => Err(anyhow!("RESP Error: {}", RESPParser::bytes_to_escaped_string(s))),
+            Resp::Error(s) => Err(anyhow!(
+                "RESP Error: {}",
+                RESPParser::bytes_to_escaped_string(s)
+            )),
             _ => Err(anyhow!("Unsupported RESP type: {:?}", resp)),
         }
     }
 
     pub fn bytes_to_escaped_string(resp_message: &[u8]) -> String {
-        format!("{}", String::from_utf8_lossy(resp_message).replace('\r', "\\r").replace('\n', "\\n"))
+        format!(
+            "{}",
+            String::from_utf8_lossy(resp_message)
+                .replace('\r', "\\r")
+                .replace('\n', "\\n")
+        )
     }
 }
 
@@ -191,7 +197,7 @@ fn parse_everything_until_crlf(input: &[u8]) -> std::result::Result<(&[u8], &[u8
 }
 
 fn parse_everything_until_index(input: &[u8], index: usize) -> Result<(&[u8], &[u8]), RespError> {
-    if input.len() < index {
+    if input.len() <= index {
         return Err(RespError::NotEnoughBytes);
     } else if input[index] == b'\r' && input[index + 1] == b'\n' {
         return Ok((&input[..index], &input[index + 2..]));

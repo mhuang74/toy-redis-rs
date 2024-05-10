@@ -5,6 +5,7 @@ mod replication_log;
 mod resp_protocol;
 mod server;
 mod storage;
+mod util;
 
 use config::{AppConfig, ReplicaMaster};
 use replica::Replica;
@@ -57,7 +58,7 @@ async fn main() {
         );
 
         let storage = Arc::new(Mutex::new(Storage::new()));
-        let replica = Replica::new(storage.clone());
+        let replica = Replica::new(master, storage.clone());
 
         let handle = tokio::spawn(async move {
             replica
@@ -86,12 +87,14 @@ async fn main() {
 
         loop {
             let (stream, addr) = listener.accept().await.unwrap();
-
-            let server = Server::new(replication_log.clone(), storage.clone());
-
             println!("accepted new connection from: {:?}", addr);
 
+            let repl_log = replication_log.clone();
+            let stor = storage.clone();
+
             tokio::spawn(async move {
+                let server = Server::new(repl_log, stor);
+
                 server
                     .handle_connection(addr, stream)
                     .await
