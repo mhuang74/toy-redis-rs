@@ -242,7 +242,8 @@ impl Server {
 
                     if let Some(request) = entry {
                         println!(
-                            "relaying repl log request: {}",
+                            "[{}] send replication message: {}",
+                            addr,
                             RESPParser::bytes_to_escaped_string(&request)
                         );
                         stream.write_all(&request).await?;
