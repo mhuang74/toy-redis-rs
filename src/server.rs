@@ -3,7 +3,7 @@ use crate::replication_log::ReplicationLog;
 use crate::replication_log::ReplicationLogIterator;
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
-use crate::{write_response, empty_response};
+use crate::{empty_response, write_response};
 use anyhow::{Error, Result};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -21,7 +21,11 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(replica_master: Option<ReplicaMaster>, replication_log: Arc<Mutex<ReplicationLog>>, storage: Arc<Mutex<Storage>>) -> Self {
+    pub fn new(
+        replica_master: Option<ReplicaMaster>,
+        replication_log: Arc<Mutex<ReplicationLog>>,
+        storage: Arc<Mutex<Storage>>,
+    ) -> Self {
         Server {
             replica_master,
             replication_log,
@@ -39,7 +43,6 @@ impl Server {
         let mut response_buffer = Vec::new();
 
         loop {
-
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
             let bytes_read = stream.read(&mut buffer).await?;
@@ -99,10 +102,7 @@ impl Server {
                                     vec![&response_val]
                                 );
                             } else {
-                                empty_response!(
-                                    &mut stream,
-                                    &mut response_buffer
-                                );
+                                empty_response!(&mut stream, &mut response_buffer);
                             }
                         }
                     }
@@ -164,7 +164,6 @@ impl Server {
                                         &mut response_buffer,
                                         vec![response.as_bytes()]
                                     );
-    
                                 } else {
                                     let mut response_buffer = Vec::new();
                                     write_response!(
@@ -237,7 +236,6 @@ impl Server {
                 let mut entry: Option<Vec<u8>>;
 
                 loop {
-
                     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
                     entry = repl_iter.next();
@@ -249,10 +247,8 @@ impl Server {
                         );
                         stream.write_all(&request).await?;
                     }
-
                 }
             }
-
         }
 
         Ok(())

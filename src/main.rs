@@ -62,8 +62,7 @@ async fn main() {
                 .await
                 .expect("Error handling input from connection");
         });
-
-    } 
+    }
 
     // Always listen on normal Server port
 

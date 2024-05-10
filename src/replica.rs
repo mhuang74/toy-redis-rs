@@ -15,9 +15,7 @@ pub struct Replica {
 
 impl Replica {
     pub fn new(storage: Arc<Mutex<Storage>>) -> Self {
-        Replica {
-            storage,
-        }
+        Replica { storage }
     }
 
     pub async fn handle_connection(
@@ -50,7 +48,6 @@ impl Replica {
 
         // enter listening loop
         loop {
-
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
             let bytes_read = stream.read(&mut buffer).await?;
