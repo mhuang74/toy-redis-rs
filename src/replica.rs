@@ -1,8 +1,5 @@
-use crate::config::ReplicaMaster;
-
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
-use crate::write_response;
 use anyhow::{Error, Result};
 
 use std::sync::{Arc, Mutex};
@@ -10,17 +7,15 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-/// Used when Redis is started in Replication Mode.
+/// Handles connection to Replication Master
 /// * Only handles WRITE requests and does not respond.
 pub struct Replica {
-    _master: ReplicaMaster,
     storage: Arc<Mutex<Storage>>,
 }
 
 impl Replica {
-    pub fn new(master: ReplicaMaster, storage: Arc<Mutex<Storage>>) -> Self {
+    pub fn new(storage: Arc<Mutex<Storage>>) -> Self {
         Replica {
-            _master: master,
             storage,
         }
     }
@@ -56,7 +51,7 @@ impl Replica {
         // enter listening loop
         loop {
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
             let bytes_read = stream.read(&mut buffer).await?;
 
@@ -113,21 +108,6 @@ impl Replica {
                             _ => {}
                         }
                     }
-                    b"INFO" | b"info" | b"Info" => {
-                        match request_vector.get(1).unwrap().as_slice() {
-                            b"REPLICATION" | b"replication" | b"Replication" => {
-                                let mut response_buffer = Vec::new();
-                                write_response!(
-                                    &mut stream,
-                                    &mut response_buffer,
-                                    vec!["role:slave".as_bytes()]
-                                );
-                            }
-                            _ => {
-                                eprintln!("Unsupported INFO subcommand");
-                            }
-                        }
-                    }
                     _ => {
                         eprintln!("Unsupported command: {}", String::from_utf8_lossy(command));
                     }
@@ -153,7 +133,7 @@ async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Re
         .await
         .expect("Failed to send message to the master");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // read response
     let bytes_read = stream.read(&mut buffer).await?;

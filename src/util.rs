@@ -1,4 +1,5 @@
 // utils
+
 #[macro_export]
 macro_rules! write_response {
     ($stream:expr, $response_buffer:expr, $vector_of_bytes:expr) => {{
@@ -12,6 +13,18 @@ macro_rules! write_response {
         } else {
             Resp::BulkString($vector_of_bytes.first().unwrap())
         };
+        $response_buffer.clear();
+        if response.write_to_writer(&mut $response_buffer).is_ok() {
+            $stream.write_all(&$response_buffer).await?;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! empty_response {
+    ($stream:expr, $response_buffer:expr) => {{
+        use $crate::resp_protocol::Resp;
+        let response = Resp::NilBulk;
         $response_buffer.clear();
         if response.write_to_writer(&mut $response_buffer).is_ok() {
             $stream.write_all(&$response_buffer).await?;

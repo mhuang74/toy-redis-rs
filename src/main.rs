@@ -36,7 +36,7 @@ async fn main() {
     // app_config.lock().unwrap().replicaof = replica_master;
 
     // Startup in Replica Mode
-    if let Some(master) = replica_master {
+    if let Some(master) = &replica_master {
         println!(
             "Starting as a Replica of {}:{}",
             master.hostname, master.port
@@ -54,48 +54,47 @@ async fn main() {
         );
 
         let storage = Arc::new(Mutex::new(Storage::new()));
-        let replica = Replica::new(master, storage.clone());
+        let replica = Replica::new(storage.clone());
 
-        let handle = tokio::spawn(async move {
+        let _handle = tokio::spawn(async move {
             replica
                 .handle_connection(stream, &address)
                 .await
                 .expect("Error handling input from connection");
         });
 
-        // prevent program from existing
-        handle.await.expect("Replica paniced");
-    } else {
-        // Start in normal Server mode
+    } 
 
-        // bind to listening port
-        let server_address = format!("127.0.0.1:{}", args.port);
+    // Always listen on normal Server port
 
-        let listener = TcpListener::bind(&server_address)
-            .await
-            .unwrap_or_else(|_| panic!("Unable to bind to server address: {}", &server_address));
+    // bind to listening port
+    let server_address = format!("127.0.0.1:{}", args.port);
 
-        println!("Server started at address: {}", &server_address);
+    let listener = TcpListener::bind(&server_address)
+        .await
+        .unwrap_or_else(|_| panic!("Unable to bind to server address: {}", &server_address));
 
-        // start Redis server listening loop
-        let replication_log = Arc::new(Mutex::new(ReplicationLog::new()));
-        let storage = Arc::new(Mutex::new(Storage::new()));
+    println!("Server started at address: {}", &server_address);
 
-        loop {
-            let (stream, addr) = listener.accept().await.unwrap();
-            println!("accepted new connection from: {:?}", addr);
+    // start Redis server listening loop
+    let replication_log = Arc::new(Mutex::new(ReplicationLog::new()));
+    let storage = Arc::new(Mutex::new(Storage::new()));
 
-            let repl_log = replication_log.clone();
-            let stor = storage.clone();
+    loop {
+        let (stream, addr) = listener.accept().await.unwrap();
+        println!("accepted new connection from: {:?}", addr);
 
-            tokio::spawn(async move {
-                let server = Server::new(repl_log, stor);
+        let repl_log = replication_log.clone();
+        let stor = storage.clone();
+        let master = replica_master.clone();
 
-                server
-                    .handle_connection(addr, stream)
-                    .await
-                    .expect("Error handling input from connection");
-            });
-        }
+        tokio::spawn(async move {
+            let server = Server::new(master, repl_log, stor);
+
+            server
+                .handle_connection(addr, stream)
+                .await
+                .expect("Error handling input from connection");
+        });
     }
 }

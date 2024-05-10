@@ -1,8 +1,9 @@
+use crate::config::ReplicaMaster;
 use crate::replication_log::ReplicationLog;
 use crate::replication_log::ReplicationLogIterator;
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
-use crate::write_response;
+use crate::{write_response, empty_response};
 use anyhow::{Error, Result};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -10,17 +11,19 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-/// Used when Redis is started in Normal/Master Mode.
+/// Handles connections to main server port
 /// * For Client connections, handles both READ and WRITE requests
 /// * For Replication connections, forward WRITE requests from Replication Log
 pub struct Server {
+    replica_master: Option<ReplicaMaster>,
     replication_log: Arc<Mutex<ReplicationLog>>,
     storage: Arc<Mutex<Storage>>,
 }
 
 impl Server {
-    pub fn new(replication_log: Arc<Mutex<ReplicationLog>>, storage: Arc<Mutex<Storage>>) -> Self {
+    pub fn new(replica_master: Option<ReplicaMaster>, replication_log: Arc<Mutex<ReplicationLog>>, storage: Arc<Mutex<Storage>>) -> Self {
         Server {
+            replica_master,
             replication_log,
             storage,
         }
@@ -37,7 +40,7 @@ impl Server {
 
         loop {
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
             let bytes_read = stream.read(&mut buffer).await?;
 
@@ -95,6 +98,11 @@ impl Server {
                                     &mut response_buffer,
                                     vec![&response_val]
                                 );
+                            } else {
+                                empty_response!(
+                                    &mut stream,
+                                    &mut response_buffer
+                                );
                             }
                         }
                     }
@@ -139,22 +147,32 @@ impl Server {
                     b"INFO" | b"info" | b"Info" => {
                         match request_vector.get(1).unwrap().as_slice() {
                             b"REPLICATION" | b"replication" | b"Replication" => {
-                                let repl_id;
-                                let repl_offset;
-                                {
-                                    let repl_log_guard = self.replication_log.lock().unwrap();
-                                    repl_id = repl_log_guard.replication_id().to_string();
-                                    repl_offset = repl_log_guard.current_offset();
+                                if self.replica_master.is_none() {
+                                    let repl_id;
+                                    let repl_offset;
+                                    {
+                                        let repl_log_guard = self.replication_log.lock().unwrap();
+                                        repl_id = repl_log_guard.replication_id().to_string();
+                                        repl_offset = repl_log_guard.current_offset();
+                                    }
+                                    let response = format!(
+                                        "role:master\nmaster_replid:{}\nmaster_repl_offset:{}",
+                                        repl_id, repl_offset
+                                    );
+                                    write_response!(
+                                        &mut stream,
+                                        &mut response_buffer,
+                                        vec![response.as_bytes()]
+                                    );
+    
+                                } else {
+                                    let mut response_buffer = Vec::new();
+                                    write_response!(
+                                        &mut stream,
+                                        &mut response_buffer,
+                                        vec!["role:slave".as_bytes()]
+                                    );
                                 }
-                                let response = format!(
-                                    "role:master\nmaster_replid:{}\nmaster_repl_offset:{}",
-                                    repl_id, repl_offset
-                                );
-                                write_response!(
-                                    &mut stream,
-                                    &mut response_buffer,
-                                    vec![response.as_bytes()]
-                                );
                             }
                             _ => {
                                 eprintln!("Unsupported INFO subcommand");
@@ -189,7 +207,7 @@ impl Server {
                         rdb_response.push(b'\n');
                         rdb_response.extend_from_slice(&rdb_bytes);
 
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
                         // send RDB file
                         stream.write_all(&rdb_response).await?;
@@ -220,7 +238,7 @@ impl Server {
 
                 loop {
 
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
                     entry = repl_iter.next();
 
