@@ -2,7 +2,7 @@
 #[macro_export]
 macro_rules! write_response {
     ($stream:expr, $response_buffer:expr, $vector_of_bytes:expr) => {{
-        use crate::resp_protocol::Resp;
+        use $crate::resp_protocol::Resp;
         let response = if $vector_of_bytes.len() > 1 {
             let bulk_strings: Vec<Resp> = $vector_of_bytes
                 .iter()

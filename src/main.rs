@@ -14,10 +14,6 @@ use server::Server;
 use std::sync::{Arc, Mutex};
 use storage::Storage;
 
-use anyhow::{anyhow, Error, Result};
-use std::net::SocketAddr;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
@@ -36,7 +32,7 @@ async fn main() {
         }
     });
 
-    let app_config = Arc::new(Mutex::new(AppConfig::new()));
+    let _app_config = Arc::new(Mutex::new(AppConfig::new()));
     // app_config.lock().unwrap().replicaof = replica_master;
 
     // Startup in Replica Mode

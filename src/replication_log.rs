@@ -62,8 +62,8 @@ impl ReplicationLogIterator {
         }
     }
 
-    // Optionally, if you want to support resetting the iterator
-    pub fn reset(&mut self) {
-        self.offset = 0;
-    }
+    // // Optionally, if you want to support resetting the iterator
+    // pub fn reset(&mut self) {
+    //     self.offset = 0;
+    // }
 }

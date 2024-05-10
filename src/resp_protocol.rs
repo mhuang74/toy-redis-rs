@@ -9,22 +9,12 @@ impl RESPParser {
 
         match parse_resp(request) {
             Ok((resp, _left)) => {
-                println!("Parsed into: {:?}", resp);
+                println!("Parsed into RESP of len{}: {:?}", resp.len(), resp);
 
                 RESPParser::resp_to_decoded_string(resp)
             }
             Err(e) => Err(anyhow!("Error parsing RESP: {}", e)),
         }
-    }
-
-    /// turn RESP objects into Vector of RESP encoded bytes
-    pub fn encode(resp_vec: Vec<Resp>) -> Result<Vec<Vec<u8>>, Error> {
-        let mut results = Vec::new();
-        resp_vec
-            .into_iter()
-            .map(|r| r.write_to_writer(&mut results));
-
-        Err(anyhow!("Error"))
     }
 
     pub fn resp_to_decoded_string(resp: Resp) -> Result<Vec<Vec<u8>>, Error> {
@@ -49,12 +39,10 @@ impl RESPParser {
     }
 
     pub fn bytes_to_escaped_string(resp_message: &[u8]) -> String {
-        format!(
-            "{}",
-            String::from_utf8_lossy(resp_message)
-                .replace('\r', "\\r")
-                .replace('\n', "\\n")
-        )
+        String::from_utf8_lossy(resp_message)
+            .replace('\r', "\\r")
+            .replace('\n', "\\n")
+            .to_string()
     }
 }
 
@@ -144,8 +132,8 @@ pub enum RespError {
 impl std::fmt::Display for RespError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RespError::NotEnoughBytes => write!(f, "{}", "No enough bytes"),
-            RespError::IncorrectFormat => write!(f, "{}", "Incorrect format"),
+            RespError::NotEnoughBytes => write!(f, "No enough bytes"),
+            RespError::IncorrectFormat => write!(f, "Incorrect format"),
             RespError::Other(err) => write!(f, "{}", err),
         }
     }
@@ -172,8 +160,8 @@ impl From<std::io::Error> for RespError {
 }
 
 pub fn parse_resp(input: &[u8]) -> RespResult {
-    if input.len() == 0 {
-        return Err(RespError::NotEnoughBytes);
+    if input.is_empty() {
+        Err(RespError::NotEnoughBytes)
     } else {
         let (resp, leftover) = match input[0] {
             b'+' => parse_simple_string(&input[1..])?,
@@ -183,7 +171,7 @@ pub fn parse_resp(input: &[u8]) -> RespResult {
             b'-' => parse_errors(&input[1..])?,
             _ => parse_simple_string(input)?,
         };
-        return Ok((resp, leftover));
+        Ok((resp, leftover))
     }
 }
 
@@ -198,7 +186,7 @@ fn parse_everything_until_crlf(input: &[u8]) -> std::result::Result<(&[u8], &[u8
 
 fn parse_everything_until_index(input: &[u8], index: usize) -> Result<(&[u8], &[u8]), RespError> {
     if input.len() <= index {
-        return Err(RespError::NotEnoughBytes);
+        Err(RespError::NotEnoughBytes)
     } else if input[index] == b'\r' && input[index + 1] == b'\n' {
         return Ok((&input[..index], &input[index + 2..]));
     } else {
@@ -223,7 +211,7 @@ pub fn parse_bulk_strings(input: &[u8]) -> RespResult {
     let size = std::str::from_utf8(size_str)?.parse::<i64>()?;
 
     if size < 0 {
-        return Ok((Resp::NilBulk, leftover));
+        Ok((Resp::NilBulk, leftover))
     } else {
         let size = size as usize;
         let (result, leftover) = parse_everything_until_index(leftover, size)?;
@@ -236,7 +224,7 @@ pub fn parse_arrays(input: &[u8]) -> RespResult {
     let size = std::str::from_utf8(size_str)?.parse::<i64>()?;
 
     if size < 0 {
-        return Ok((Resp::NilArray, leftover));
+        Ok((Resp::NilArray, leftover))
     } else {
         let sizes = size as usize;
         let mut left = leftover;

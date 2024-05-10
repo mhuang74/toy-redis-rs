@@ -1,10 +1,10 @@
 use crate::config::ReplicaMaster;
-use crate::replication_log::ReplicationLog;
+
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
 use crate::write_response;
-use anyhow::{anyhow, Error, Result};
-use std::net::SocketAddr;
+use anyhow::{Error, Result};
+
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -13,13 +13,16 @@ use tokio::net::TcpStream;
 /// Used when Redis is started in Replication Mode.
 /// * Only handles WRITE requests and does not respond.
 pub struct Replica {
-    master: ReplicaMaster,
+    _master: ReplicaMaster,
     storage: Arc<Mutex<Storage>>,
 }
 
 impl Replica {
     pub fn new(master: ReplicaMaster, storage: Arc<Mutex<Storage>>) -> Self {
-        Replica { master, storage }
+        Replica {
+            _master: master,
+            storage,
+        }
     }
 
     pub async fn handle_connection(

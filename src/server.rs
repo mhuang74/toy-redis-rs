@@ -1,9 +1,9 @@
 use crate::replication_log::ReplicationLog;
 use crate::replication_log::ReplicationLogIterator;
-use crate::resp_protocol::{RESPParser, Resp};
+use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
 use crate::write_response;
-use anyhow::{anyhow, Error, Result};
+use anyhow::{Error, Result};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
