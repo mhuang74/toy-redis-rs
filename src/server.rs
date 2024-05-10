@@ -36,6 +36,9 @@ impl Server {
         let mut response_buffer = Vec::new();
 
         loop {
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
             let bytes_read = stream.read(&mut buffer).await?;
 
             if bytes_read == 0 {
@@ -186,6 +189,8 @@ impl Server {
                         rdb_response.push(b'\n');
                         rdb_response.extend_from_slice(&rdb_bytes);
 
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
                         // send RDB file
                         stream.write_all(&rdb_response).await?;
 
@@ -214,6 +219,9 @@ impl Server {
                 let mut entry: Option<Vec<u8>>;
 
                 loop {
+
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
                     entry = repl_iter.next();
 
                     if let Some(request) = entry {
@@ -224,9 +232,9 @@ impl Server {
                         stream.write_all(&request).await?;
                     }
 
-                    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
                 }
             }
+
         }
 
         Ok(())

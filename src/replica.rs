@@ -55,10 +55,13 @@ impl Replica {
 
         // enter listening loop
         loop {
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
             let bytes_read = stream.read(&mut buffer).await?;
 
             if bytes_read == 0 {
-                eprintln!("Disconncted from Replication Master at {}", address);
+                eprintln!("[{}]: Disconncted from Master", address);
                 break;
             }
 
@@ -133,7 +136,6 @@ impl Replica {
                 eprintln!("Received an empty RESP request");
             }
         }
-
         Ok(())
     }
 }
@@ -151,6 +153,9 @@ async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Re
         .await
         .expect("Failed to send message to the master");
 
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // read response
     let bytes_read = stream.read(&mut buffer).await?;
 
     // only convert part of buffer with data read in!
