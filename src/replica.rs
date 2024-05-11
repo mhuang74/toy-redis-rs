@@ -45,6 +45,7 @@ impl Replica {
         // read in RDB file after PSYNC response
         let bytes_read = stream.read(&mut buffer).await?;
         println!("Received {} bytes of RDB file", bytes_read);
+        println!("Handshake complete. Entering replication listen loop");
 
         // enter listening loop
         loop {
@@ -60,58 +61,75 @@ impl Replica {
             // only convert part of buffer with data read in!
             let request = &buffer[..bytes_read];
             println!(
-                "Master[{}]: {}",
-                address,
+                "[Replica] Received: {}",
                 RESPParser::bytes_to_escaped_string(request)
             );
 
-            let request_vector = match RESPParser::parse(request) {
-                Ok(req_vec) => {
+            let commands = match RESPParser::parse(request) {
+                Ok(commands) => {
                     // println!("Parsed request: {:?}", req_vec);
-                    req_vec
+                    commands
                 }
                 Err(e) => {
-                    eprintln!("Error parsing RESP: {}", e);
+                    eprintln!("[Replica] {}. Req: {}", e, RESPParser::bytes_to_escaped_string(request));
                     continue; // Skip this iteration if there's an error
                 }
             };
 
-            if let Some(command) = request_vector.first() {
-                match command.as_slice() {
-                    b"SET" | b"set" | b"Set" => {
-                        let set_args: [Option<&[u8]>; 4] = [
-                            request_vector.get(1).map(|x| x.as_slice()),
-                            request_vector.get(2).map(|x| x.as_slice()),
-                            request_vector.get(3).map(|x| x.as_slice()),
-                            request_vector.get(4).map(|x| x.as_slice()),
-                        ];
-                        match set_args {
-                            [Some(var), Some(val), None, None] => {
-                                let mut storage = self.storage.lock().unwrap();
-                                storage.set(var.to_vec(), val.to_vec(), None);
-                            }
-                            [Some(var), Some(val), Some(b"PX" | b"px"), Some(expiry)] => {
-                                use std::time::Duration;
-                                let expiry_duration = Duration::from_millis(
-                                    String::from_utf8_lossy(expiry)
-                                        .parse::<u64>()
-                                        .expect("Invalid expiry format"),
-                                );
-                                {
-                                    let mut storage = self.storage.lock().unwrap();
-                                    storage.set(var.to_vec(), val.to_vec(), Some(expiry_duration));
+            for command in commands {
+
+                let request_parts = command.request;
+
+                if let Some(action) = request_parts.first() {
+                    // clear response buffer
+
+                    match action.as_slice() {
+                        b"SET" | b"set" | b"Set" => {
+                            let set_args: [Option<&[u8]>; 4] = [
+                                request_parts.get(1).map(|x| x.as_slice()),
+                                request_parts.get(2).map(|x| x.as_slice()),
+                                request_parts.get(3).map(|x| x.as_slice()),
+                                request_parts.get(4).map(|x| x.as_slice()),
+                            ];
+                            match set_args {
+                                [Some(var), Some(val), None, None] => {
+                                    {
+                                        let mut storage = self.storage.lock().unwrap();
+                                    storage.set(var.to_vec(), val.to_vec(), None);
+                                    }
+                                    eprintln!("[Replica] {} set to {}", String::from_utf8_lossy(var), String::from_utf8_lossy(val));
+
+                                }
+                                [Some(var), Some(val), Some(b"PX" | b"px"), Some(expiry)] => {
+                                    use std::time::Duration;
+                                    let expiry_duration = Duration::from_millis(
+                                        String::from_utf8_lossy(expiry)
+                                            .parse::<u64>()
+                                            .expect("Invalid expiry format"),
+                                    );
+                                    {
+                                        let mut storage = self.storage.lock().unwrap();
+                                        storage.set(var.to_vec(), val.to_vec(), Some(expiry_duration));
+                                    }
+                                    eprintln!("[Replica] {} set to {} with expiry {:?}", String::from_utf8_lossy(var), String::from_utf8_lossy(val), expiry_duration);
+
+                                }
+                                _ => {
+                                    eprintln!("[Replica] Unsupported SET subcommand");
                                 }
                             }
-                            _ => {}
+
+                        }
+                        _ => {
+                            // Handle other commands
+                            eprintln!("[Replica] Unsupported command: {}", String::from_utf8_lossy(action));
                         }
                     }
-                    _ => {
-                        eprintln!("Unsupported command: {}", String::from_utf8_lossy(command));
-                    }
+                } else {
+                    eprintln!("[Replica] Received an empty RESP request");
                 }
-            } else {
-                eprintln!("Received an empty RESP request");
             }
+
         }
         Ok(())
     }
@@ -130,7 +148,7 @@ async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Re
         .await
         .expect("Failed to send message to the master");
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    // tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
     // read response
     let bytes_read = stream.read(&mut buffer).await?;

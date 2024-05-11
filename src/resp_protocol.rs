@@ -1,20 +1,43 @@
 use anyhow::{anyhow, Error};
+use crate::command::Command;
 
 pub struct RESPParser;
 
 impl RESPParser {
     /// parse RESP encoded bytes into Vector of UTF strings
-    pub fn parse(request: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
+    pub fn parse(request: &[u8]) -> Result<Vec<Command>, Error> {
         // println!("About to parse: {}", RESPParser::bytes_to_escaped_string(request));
 
-        match parse_resp(request) {
-            Ok((resp, _left)) => {
-                println!("Parsed into RESP of len{}: {:?}", resp.len(), resp);
+        let mut leftover: &[u8] = request;
+        let mut results: Vec<Command> = Vec::new();
 
-                RESPParser::resp_to_decoded_string(resp)
+        while leftover.len() > 0 {
+            match parse_resp(leftover) {
+                Ok((resp, left)) => {
+                    println!("Parsed into RESP of len {}: {:?}", resp.len(), resp);
+                    // println!("leftover: {}", RESPParser::bytes_to_escaped_string(left));
+
+                    leftover = left;
+
+                    match RESPParser::resp_to_decoded_string(resp) {
+                        Ok(request) => {
+                            results.push(Command{request})
+                        }
+                        Err(e) => {
+                            eprintln!("{}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error parsing RESP: {}", e);
+                },
             }
-            Err(e) => Err(anyhow!("Error parsing RESP: {}", e)),
         }
+
+        println!("Parsed into {} commands", {results.len()});
+
+        Ok(results)
+
     }
 
     pub fn resp_to_decoded_string(resp: Resp) -> Result<Vec<Vec<u8>>, Error> {

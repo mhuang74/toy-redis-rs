@@ -6,6 +6,7 @@ mod resp_protocol;
 mod server;
 mod storage;
 mod util;
+mod command;
 
 use config::{AppConfig, ReplicaMaster};
 use replica::Replica;
@@ -37,11 +38,6 @@ async fn main() {
 
     // Startup in Replica Mode
     if let Some(master) = &replica_master {
-        println!(
-            "Starting as a Replica of {}:{}",
-            master.hostname, master.port
-        );
-
         // connect to Replication Master
         let address = format!("{}:{}", master.hostname, master.port);
         let stream = TcpStream::connect(&address)
@@ -73,7 +69,7 @@ async fn main() {
         .await
         .unwrap_or_else(|_| panic!("Unable to bind to server address: {}", &server_address));
 
-    println!("Server started at address: {}", &server_address);
+    println!("Main handler started at address: {}", &server_address);
 
     // start Redis server listening loop
     let replication_log = Arc::new(Mutex::new(ReplicationLog::new()));
