@@ -1,4 +1,5 @@
 mod args;
+mod command;
 mod config;
 mod replica;
 mod replication_log;
@@ -6,7 +7,6 @@ mod resp_protocol;
 mod server;
 mod storage;
 mod util;
-mod command;
 
 use config::{AppConfig, ReplicaMaster};
 use replica::Replica;
@@ -23,18 +23,15 @@ async fn main() {
     let args = args::parse();
 
     // Parse the replicaof argument into a ReplicaMaster if provided
-    let replica_master = args.replicaof.map(|values| {
-        if values.len() == 2 {
-            let hostname = values[0].clone();
-            let port = values[1].parse::<usize>().expect("Invalid port number");
-            ReplicaMaster { hostname, port }
-        } else {
-            panic!("Expected hostname and port for --replicaof");
-        }
+    let replica_master = args.replicaof.map(|(hostname, port)| {
+        ReplicaMaster { hostname, port: port as usize }
     });
 
     let _app_config = Arc::new(Mutex::new(AppConfig::new()));
     // app_config.lock().unwrap().replicaof = replica_master;
+
+    // storaged shared by main server handler and replica handler
+    let storage = Arc::new(Mutex::new(Storage::new()));
 
     // Startup in Replica Mode
     if let Some(master) = &replica_master {
@@ -49,7 +46,6 @@ async fn main() {
             master.hostname, master.port
         );
 
-        let storage = Arc::new(Mutex::new(Storage::new()));
         let replica = Replica::new(storage.clone());
 
         let _handle = tokio::spawn(async move {
@@ -71,10 +67,10 @@ async fn main() {
 
     println!("Main handler started at address: {}", &server_address);
 
-    // start Redis server listening loop
+    // TODO: this is shared between Server threads that handles WRITE, and Replica threads that propgate WRITE to replicas
     let replication_log = Arc::new(Mutex::new(ReplicationLog::new()));
-    let storage = Arc::new(Mutex::new(Storage::new()));
 
+    // start Redis server listening loop
     loop {
         let (stream, addr) = listener.accept().await.unwrap();
         println!("accepted new connection from: {:?}", addr);
