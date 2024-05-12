@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Error};
 use crate::command::Command;
+use anyhow::{anyhow, Error};
 
 pub struct RESPParser;
 
@@ -11,7 +11,9 @@ impl RESPParser {
         let mut leftover: &[u8] = request;
         let mut results: Vec<Command> = Vec::new();
 
-        while leftover.len() > 0 {
+        let mut count = 0;
+        while (leftover.len() > 0) & (count < 10) {
+            count += 1;
             match parse_resp(leftover) {
                 Ok((resp, left)) => {
                     println!("Parsed into RESP of len {}: {:?}", resp.len(), resp);
@@ -20,24 +22,26 @@ impl RESPParser {
                     leftover = left;
 
                     match RESPParser::resp_to_decoded_string(resp) {
-                        Ok(request) => {
-                            results.push(Command{request})
-                        }
+                        Ok(request) => results.push(Command { request }),
                         Err(e) => {
                             eprintln!("{}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error parsing RESP: {}", e);
-                },
+                    eprintln!(
+                        "{}. Error parsing '{}'",
+                        e,
+                        RESPParser::bytes_to_escaped_string(leftover)
+                    );
+                    break;
+                }
             }
         }
 
-        println!("Parsed into {} commands", {results.len()});
+        println!("Parsed into {} commands", { results.len() });
 
         Ok(results)
-
     }
 
     pub fn resp_to_decoded_string(resp: Resp) -> Result<Vec<Vec<u8>>, Error> {
@@ -237,8 +241,13 @@ pub fn parse_bulk_strings(input: &[u8]) -> RespResult {
         Ok((Resp::NilBulk, leftover))
     } else {
         let size = size as usize;
-        let (result, leftover) = parse_everything_until_index(leftover, size)?;
-        return Ok((Resp::BulkString(result), leftover));
+        if leftover.starts_with(b"REDIS") {
+            let (result, leftover) = (&input[..size], &input[size..]);
+            Ok((Resp::BulkString(result), leftover))
+        } else {
+            let (result, leftover) = parse_everything_until_index(leftover, size)?;
+            Ok((Resp::BulkString(result), leftover))
+        }
     }
 }
 
@@ -314,6 +323,14 @@ mod test {
         let (resp, left) = parse_resp(input).unwrap();
         assert_eq!(resp, Resp::BulkString("".as_bytes()));
         assert!(left.is_empty());
+    }
+
+    #[test]
+    pub fn test_rdb_file() {
+        let input =
+            "$88\r\nREDIS0011�	redis-ver7.2.0�\nredis-bits�@�ctime��eused-mem°�aof-base���n;���Z�"
+                .as_bytes();
+        let (_resp, _left) = parse_bulk_strings(&input[1..]).unwrap();
     }
 
     #[test]
