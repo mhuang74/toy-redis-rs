@@ -1,3 +1,4 @@
+use crate::resp_protocol::parse_bulk_strings;
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
 use anyhow::{Error, Result};
@@ -30,6 +31,7 @@ impl Replica {
         const REPL_CONF_PSYNC: &str = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
 
         let mut buffer = [0; 1024];
+        let mut leftover = Vec::new();
 
         // PING
         send_and_wait_for_response(&mut stream, PING).await?;
@@ -44,40 +46,68 @@ impl Replica {
         send_and_wait_for_response(&mut stream, REPL_CONF_PSYNC).await?;
         // read in RDB file after PSYNC response
         let bytes_read = stream.read(&mut buffer).await?;
-        println!("Received {} bytes of RDB file", bytes_read);
-        println!("Handshake complete. Entering replication listen loop");
+     
+        // parse_bulk_string expects input to have skipped the first '$' char
+        let request = &buffer[1..bytes_read];
+        println!("RDB file: {}", RESPParser::bytes_to_escaped_string(request));
+        if let Ok((rdb, temp_leftover)) = parse_bulk_strings(request) {
+            println!("[Replica] Received {} bytes of RDB file", rdb.len());
+            // move leftover up
+            leftover.extend_from_slice(temp_leftover);
+        }
+        // clear and populate buffer with leftover commands
+        buffer.fill(0);
+        buffer[..leftover.len()].copy_from_slice(&leftover);
+        println!("buffer with leftover: {}", RESPParser::bytes_to_escaped_string(&buffer));
+
+        println!("[Replica] Handshake complete. Entering replication listen loop");
 
         // enter listening loop
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-            let bytes_read = stream.read(&mut buffer).await?;
+            let bytes_read: usize;
 
-            if bytes_read == 0 {
-                eprintln!("[{}]: Disconncted from Master", address);
-                break;
+            if buffer.iter().all(|&x| x == 0) {
+                // buffer empty, read from from stream
+                bytes_read = stream.read(&mut buffer).await?;
+                if bytes_read == 0 {
+                    eprintln!("[Replica] Disconnected from Replication Master {}", address);
+                    break;
+                }
+            } else {
+                // reprocess entire buffer, except for the nulls at end
+                let zero_count = buffer.iter().rev().take_while(|&&x| x == 0).count();
+                bytes_read = buffer.len() - zero_count;
             }
 
             // only convert part of buffer with data read in!
             let request = &buffer[..bytes_read];
             println!(
-                "[Replica] Received: {}",
+                "[Replica] Received from {}: {}",
+                address,
                 RESPParser::bytes_to_escaped_string(request)
             );
 
             let commands = match RESPParser::parse(request) {
                 Ok(commands) => {
                     // println!("Parsed request: {:?}", req_vec);
+                    // clear entire buffer
+                    buffer.fill(0);
                     commands
                 }
                 Err(e) => {
-                    eprintln!("[Replica] {}. Req: {}", e, RESPParser::bytes_to_escaped_string(request));
+                    eprintln!(
+                        "[Replica] {}. Req: {}",
+                        e,
+                        RESPParser::bytes_to_escaped_string(request)
+                    );
+                    buffer.fill(0);
                     continue; // Skip this iteration if there's an error
                 }
             };
 
             for command in commands {
-
                 let request_parts = command.request;
 
                 if let Some(action) = request_parts.first() {
@@ -95,10 +125,13 @@ impl Replica {
                                 [Some(var), Some(val), None, None] => {
                                     {
                                         let mut storage = self.storage.lock().unwrap();
-                                    storage.set(var.to_vec(), val.to_vec(), None);
+                                        storage.set(var.to_vec(), val.to_vec(), None);
                                     }
-                                    eprintln!("[Replica] {} set to {}", String::from_utf8_lossy(var), String::from_utf8_lossy(val));
-
+                                    eprintln!(
+                                        "[Replica] {} set to {}",
+                                        String::from_utf8_lossy(var),
+                                        String::from_utf8_lossy(val)
+                                    );
                                 }
                                 [Some(var), Some(val), Some(b"PX" | b"px"), Some(expiry)] => {
                                     use std::time::Duration;
@@ -109,35 +142,45 @@ impl Replica {
                                     );
                                     {
                                         let mut storage = self.storage.lock().unwrap();
-                                        storage.set(var.to_vec(), val.to_vec(), Some(expiry_duration));
+                                        storage.set(
+                                            var.to_vec(),
+                                            val.to_vec(),
+                                            Some(expiry_duration),
+                                        );
                                     }
-                                    eprintln!("[Replica] {} set to {} with expiry {:?}", String::from_utf8_lossy(var), String::from_utf8_lossy(val), expiry_duration);
-
+                                    eprintln!(
+                                        "[Replica] {} set to {} with expiry {:?}",
+                                        String::from_utf8_lossy(var),
+                                        String::from_utf8_lossy(val),
+                                        expiry_duration
+                                    );
                                 }
                                 _ => {
                                     eprintln!("[Replica] Unsupported SET subcommand");
                                 }
                             }
-
                         }
                         _ => {
                             // Handle other commands
-                            eprintln!("[Replica] Unsupported command: {}", String::from_utf8_lossy(action));
+                            eprintln!(
+                                "[Replica] Unsupported command: {}",
+                                String::from_utf8_lossy(action)
+                            );
                         }
                     }
                 } else {
                     eprintln!("[Replica] Received an empty RESP request");
                 }
             }
-
         }
         Ok(())
     }
 }
 
 async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Result<()> {
+
     println!(
-        "[Replica] Sending: {}",
+        "[Replica Handshake] Sending: {}",
         RESPParser::bytes_to_escaped_string(message.as_bytes())
     );
 
@@ -156,7 +199,7 @@ async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Re
     // only convert part of buffer with data read in!
     let reply = &buffer[..bytes_read];
     println!(
-        "[Replica] Received: {}",
+        "[Replica Handshake] Received: {}",
         RESPParser::bytes_to_escaped_string(reply)
     );
 
