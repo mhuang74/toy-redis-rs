@@ -66,13 +66,16 @@ impl Server {
                     commands
                 }
                 Err(e) => {
-                    eprintln!("{}. Req: {}", e, RESPParser::bytes_to_escaped_string(request));
+                    eprintln!(
+                        "{}. Req: {}",
+                        e,
+                        RESPParser::bytes_to_escaped_string(request)
+                    );
                     continue; // Skip this iteration if there's an error
                 }
             };
 
             for command in commands {
-
                 let request_parts = command.request;
 
                 if let Some(action) = request_parts.first() {
@@ -81,14 +84,22 @@ impl Server {
 
                     match action.as_slice() {
                         b"PING" | b"ping" | b"Ping" => {
-                            write_response!(&mut stream, &mut response_buffer, vec!["PONG".as_bytes()]);
+                            write_response!(
+                                &mut stream,
+                                &mut response_buffer,
+                                vec!["PONG".as_bytes()]
+                            );
                         }
                         b"ECHO" | b"echo" | b"Echo" => {
                             let args = request_parts[1..].to_vec();
                             write_response!(&mut stream, &mut response_buffer, args);
                         }
                         b"REPLCONF" | b"replconf" | b"Replconf" => {
-                            write_response!(&mut stream, &mut response_buffer, vec!["OK".as_bytes()]);
+                            write_response!(
+                                &mut stream,
+                                &mut response_buffer,
+                                vec!["OK".as_bytes()]
+                            );
                         }
                         b"GET" | b"get" | b"Get" => {
                             if let Some(var_bytes) = request_parts.get(1) {
@@ -99,6 +110,8 @@ impl Server {
                                     val = storage.get(&key);
                                 }
                                 if val.is_some() {
+                                    println!("GET: Value found for '{}'", String::from_utf8_lossy(var_bytes));
+
                                     let response_val = val.unwrap().to_owned();
                                     write_response!(
                                         &mut stream,
@@ -106,8 +119,11 @@ impl Server {
                                         vec![&response_val]
                                     );
                                 } else {
+                                    println!("GET: No value found for '{}'", String::from_utf8_lossy(var_bytes));
                                     empty_response!(&mut stream, &mut response_buffer);
                                 }
+                            } else {
+                                eprintln!("Missing key for GET")
                             }
                         }
                         b"SET" | b"set" | b"Set" => {
@@ -121,10 +137,13 @@ impl Server {
                                 [Some(var), Some(val), None, None] => {
                                     {
                                         let mut storage = self.storage.lock().unwrap();
-                                    storage.set(var.to_vec(), val.to_vec(), None);
+                                        storage.set(var.to_vec(), val.to_vec(), None);
                                     }
-                                    eprintln!("{} set to {}", String::from_utf8_lossy(var), String::from_utf8_lossy(val));
-
+                                    eprintln!(
+                                        "{} set to {}",
+                                        String::from_utf8_lossy(var),
+                                        String::from_utf8_lossy(val)
+                                    );
                                 }
                                 [Some(var), Some(val), Some(b"PX" | b"px"), Some(expiry)] => {
                                     use std::time::Duration;
@@ -135,10 +154,18 @@ impl Server {
                                     );
                                     {
                                         let mut storage = self.storage.lock().unwrap();
-                                        storage.set(var.to_vec(), val.to_vec(), Some(expiry_duration));
+                                        storage.set(
+                                            var.to_vec(),
+                                            val.to_vec(),
+                                            Some(expiry_duration),
+                                        );
                                     }
-                                    eprintln!("{} set to {} with expiry {:?}", String::from_utf8_lossy(var), String::from_utf8_lossy(val), expiry_duration);
-
+                                    eprintln!(
+                                        "{} set to {} with expiry {:?}",
+                                        String::from_utf8_lossy(var),
+                                        String::from_utf8_lossy(val),
+                                        expiry_duration
+                                    );
                                 }
                                 _ => {
                                     eprintln!("Unsupported SET subcommand");
@@ -152,7 +179,11 @@ impl Server {
                             }
 
                             // respond OK
-                            write_response!(&mut stream, &mut response_buffer, vec!["OK".as_bytes()]);
+                            write_response!(
+                                &mut stream,
+                                &mut response_buffer,
+                                vec!["OK".as_bytes()]
+                            );
                         }
                         b"INFO" | b"info" | b"Info" => {
                             match request_parts.get(1).unwrap().as_slice() {
@@ -161,7 +192,8 @@ impl Server {
                                         let repl_id;
                                         let repl_offset;
                                         {
-                                            let repl_log_guard = self.replication_log.lock().unwrap();
+                                            let repl_log_guard =
+                                                self.replication_log.lock().unwrap();
                                             repl_id = repl_log_guard.replication_id().to_string();
                                             repl_offset = repl_log_guard.current_offset();
                                         }
@@ -207,7 +239,8 @@ impl Server {
                             );
 
                             // Convert the hex string to bytes
-                            let rdb_bytes = hex::decode(EMPTY_RDB_FILE_HEX).expect("Can't decode hex");
+                            let rdb_bytes =
+                                hex::decode(EMPTY_RDB_FILE_HEX).expect("Can't decode hex");
 
                             let mut rdb_response: Vec<u8> = Vec::new();
                             rdb_response.push(b'$');
