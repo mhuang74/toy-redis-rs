@@ -139,7 +139,7 @@ impl<'a> Resp<'a> {
                 for s in a {
                     s.write_to_writer(writer)?
                 }
-                writer.write_all(&[b'\r', b'\n'])?;
+                // writer.write_all(&[b'\r', b'\n'])?;
             }
             Resp::NilArray => writer.write_all(&[b'*', b'-', b'1', b'\r', b'\n'])?,
         };
