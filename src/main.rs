@@ -23,8 +23,9 @@ async fn main() {
     let args = args::parse();
 
     // Parse the replicaof argument into a ReplicaMaster if provided
-    let replica_master = args.replicaof.map(|(hostname, port)| {
-        ReplicaMaster { hostname, port: port as usize }
+    let replica_master = args.replicaof.map(|(hostname, port)| ReplicaMaster {
+        hostname,
+        port: port as usize,
     });
 
     let _app_config = Arc::new(Mutex::new(AppConfig::new()));

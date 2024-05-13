@@ -8,7 +8,9 @@ fn parse_host_port(s: &str) -> Result<(String, u16), String> {
         return Err("Please provide a host and port in the format 'hostname port'".to_string());
     }
     let host = parts[0].to_string();
-    let port = parts[1].parse::<u16>().map_err(|_| "Invalid port number".to_string())?;
+    let port = parts[1]
+        .parse::<u16>()
+        .map_err(|_| "Invalid port number".to_string())?;
     Ok((host, port))
 }
 

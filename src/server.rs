@@ -110,7 +110,10 @@ impl Server {
                                     val = storage.get(&key);
                                 }
                                 if val.is_some() {
-                                    println!("GET: Value found for '{}'", String::from_utf8_lossy(var_bytes));
+                                    println!(
+                                        "GET: Value found for '{}'",
+                                        String::from_utf8_lossy(var_bytes)
+                                    );
 
                                     let response_val = val.unwrap().to_owned();
                                     write_response!(
@@ -119,7 +122,10 @@ impl Server {
                                         vec![&response_val]
                                     );
                                 } else {
-                                    println!("GET: No value found for '{}'", String::from_utf8_lossy(var_bytes));
+                                    println!(
+                                        "GET: No value found for '{}'",
+                                        String::from_utf8_lossy(var_bytes)
+                                    );
                                     empty_response!(&mut stream, &mut response_buffer);
                                 }
                             } else {

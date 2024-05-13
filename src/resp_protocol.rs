@@ -12,7 +12,7 @@ impl RESPParser {
         let mut results: Vec<Command> = Vec::new();
 
         let mut count = 0;
-        while (leftover.len() > 0) & (count < 10) {
+        while (!leftover.is_empty()) & (count < 10) {
             count += 1;
             match parse_resp(leftover) {
                 Ok((resp, left)) => {
@@ -93,23 +93,24 @@ pub enum Resp<'a> {
 
 impl<'a> std::fmt::Display for Resp<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        println!("Custom formatter!");
         match self {
-            Resp::String(bytes) | Resp::Error(bytes) | Resp::Integer(bytes) | Resp::BulkString(bytes) => {
+            Resp::String(bytes)
+            | Resp::Error(bytes)
+            | Resp::Integer(bytes)
+            | Resp::BulkString(bytes) => {
                 write!(f, "{}", hex::encode(bytes))
-            },
+            }
             Resp::NilBulk => write!(f, "(nil bulk string)"),
             Resp::Array(array) => {
                 let strings: Vec<String> = array.iter().map(|resp| format!("{}", resp)).collect();
                 write!(f, "[{}]", strings.join(", "))
-            },
+            }
             Resp::NilArray => write!(f, "(nil array)"),
         }
     }
 }
 
-
-impl<'a> Resp<'a> {  
+impl<'a> Resp<'a> {
     pub fn len(&self) -> usize {
         match self {
             Resp::String(s) => s.len() + 1,
@@ -346,8 +347,7 @@ mod test {
     #[test]
     pub fn test_rdb_file() {
         const EMPTY_RDB_FILE_HEX: &str = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
-        let rdb_bytes =
-            hex::decode(EMPTY_RDB_FILE_HEX).expect("Can't decode hex");
+        let rdb_bytes = hex::decode(EMPTY_RDB_FILE_HEX).expect("Can't decode hex");
         let mut rdb_response: Vec<u8> = Vec::new();
         rdb_response.push(b'$');
         rdb_response.extend_from_slice(rdb_bytes.len().to_string().as_bytes());

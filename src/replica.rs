@@ -1,4 +1,3 @@
-use crate::resp_protocol::parse_bulk_strings;
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
 use crate::write_response;
@@ -157,7 +156,10 @@ impl Replica {
                                     write_response!(
                                         &mut stream,
                                         &mut response_buffer,
-                                        "REPLCONF ACK 0".split_whitespace().map(|s| s.as_bytes()).collect::<Vec<&[u8]>>()
+                                        "REPLCONF ACK 0"
+                                            .split_whitespace()
+                                            .map(|s| s.as_bytes())
+                                            .collect::<Vec<&[u8]>>()
                                     );
                                 }
                                 _ => {
@@ -183,13 +185,10 @@ impl Replica {
 }
 
 async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Result<()> {
-
     println!(
         "[Replica Handshake] Sending: {}",
         RESPParser::bytes_to_escaped_string(message.as_bytes())
     );
-
-    let mut buffer: [u8; 1024] = [0; 1024];
 
     stream
         .write_all(message.as_bytes())
@@ -197,7 +196,6 @@ async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Re
         .expect("Failed to send message to the master");
 
     tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
-
 
     Ok(())
 }
