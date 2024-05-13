@@ -16,7 +16,7 @@ macro_rules! write_response {
         $response_buffer.clear();
         if response.write_to_writer(&mut $response_buffer).is_ok() {
             $stream.write_all(&$response_buffer).await?;
-            println!("Sent: {}", String::from_utf8_lossy(&$response_buffer));
+            println!("Sent: {}", RESPParser::bytes_to_escaped_string(&$response_buffer));
         }
     }};
 }
