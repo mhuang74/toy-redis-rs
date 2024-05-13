@@ -1,6 +1,7 @@
 use crate::resp_protocol::parse_bulk_strings;
 use crate::resp_protocol::RESPParser;
 use crate::storage::Storage;
+use crate::write_response;
 use anyhow::{Error, Result};
 
 use std::sync::{Arc, Mutex};
@@ -31,7 +32,6 @@ impl Replica {
         const REPL_CONF_PSYNC: &str = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
 
         let mut buffer = [0; 1024];
-        let mut leftover = Vec::new();
 
         // PING
         send_and_wait_for_response(&mut stream, PING).await?;
@@ -44,23 +44,10 @@ impl Replica {
 
         // PSYNC
         send_and_wait_for_response(&mut stream, REPL_CONF_PSYNC).await?;
-        // read in RDB file after PSYNC response
-        let bytes_read = stream.read(&mut buffer).await?;
-     
-        // parse_bulk_string expects input to have skipped the first '$' char
-        let request = &buffer[1..bytes_read];
-        println!("RDB file: {}", RESPParser::bytes_to_escaped_string(request));
-        if let Ok((rdb, temp_leftover)) = parse_bulk_strings(request) {
-            println!("[Replica] Received {} bytes of RDB file", rdb.len());
-            // move leftover up
-            leftover.extend_from_slice(temp_leftover);
-        }
-        // clear and populate buffer with leftover commands
-        buffer.fill(0);
-        buffer[..leftover.len()].copy_from_slice(&leftover);
-        println!("buffer with leftover: {}", RESPParser::bytes_to_escaped_string(&buffer));
 
         println!("[Replica] Handshake complete. Entering replication listen loop");
+
+        let mut response_buffer = Vec::new();
 
         // enter listening loop
         loop {
@@ -160,6 +147,24 @@ impl Replica {
                                 }
                             }
                         }
+                        b"REPLCONF" | b"replconf" | b"ReplConf" => {
+                            let set_args: [Option<&[u8]>; 2] = [
+                                request_parts.get(1).map(|x| x.as_slice()),
+                                request_parts.get(2).map(|x| x.as_slice()),
+                            ];
+                            match set_args {
+                                [Some(b"GETACK"), Some(b"*")] => {
+                                    write_response!(
+                                        &mut stream,
+                                        &mut response_buffer,
+                                        "REPLCONF ACK 0".split_whitespace().map(|s| s.as_bytes()).collect::<Vec<&[u8]>>()
+                                    );
+                                }
+                                _ => {
+                                    eprintln!("[Replica] Unsupported REPLCONF subcommand");
+                                }
+                            }
+                        }
                         _ => {
                             // Handle other commands
                             eprintln!(
@@ -191,17 +196,8 @@ async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Re
         .await
         .expect("Failed to send message to the master");
 
-    // tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
 
-    // read response
-    let bytes_read = stream.read(&mut buffer).await?;
-
-    // only convert part of buffer with data read in!
-    let reply = &buffer[..bytes_read];
-    println!(
-        "[Replica Handshake] Received: {}",
-        RESPParser::bytes_to_escaped_string(reply)
-    );
 
     Ok(())
 }
