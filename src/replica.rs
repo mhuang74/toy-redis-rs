@@ -12,15 +12,32 @@ use tokio::net::TcpStream;
 /// * Only handles WRITE requests and does not respond.
 pub struct Replica {
     storage: Arc<Mutex<Storage>>,
+    offset: usize,
 }
 
 impl Replica {
     pub fn new(storage: Arc<Mutex<Storage>>) -> Self {
-        Replica { storage }
+        Replica { storage, offset: 0}
+    }
+
+    /// Increments the offset of the replica by the given amount.
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - The amount to increment the offset by.
+    pub fn increment_offset(&mut self, amount: usize) {
+        let old_offset = self.offset;
+        self.offset += amount;
+        println!("Incrementing offset from {} to {}", old_offset, self.offset);
+    }
+
+    /// Returns the current offset of the replica as a byte array.
+    pub fn get_offset_as_bytes(&self) -> Vec<u8> {
+        self.offset.to_string().into_bytes()
     }
 
     pub async fn handle_connection(
-        &self,
+        &mut self,
         mut stream: TcpStream,
         address: &str,
     ) -> Result<(), Error> {
@@ -96,10 +113,20 @@ impl Replica {
             for command in commands {
                 let request_parts = command.request;
 
+                let request_string = request_parts
+                    .iter()
+                    .map(|slice| String::from_utf8_lossy(slice).to_string())
+                    .collect::<Vec<String>>()
+                    .join(" ");
+                println!("Processing command of {} raw bytes: {}", command.raw_request_bytes_length, request_string);
+
                 if let Some(action) = request_parts.first() {
                     // clear response buffer
 
                     match action.as_slice() {
+                        b"PING" | b"ping" | b"Ping" => {
+                            self.increment_offset(command.raw_request_bytes_length);
+                        }
                         b"SET" | b"set" | b"Set" => {
                             let set_args: [Option<&[u8]>; 4] = [
                                 request_parts.get(1).map(|x| x.as_slice()),
@@ -145,27 +172,36 @@ impl Replica {
                                     eprintln!("[Replica] Unsupported SET subcommand");
                                 }
                             }
+
+                            self.increment_offset(command.raw_request_bytes_length);
+
                         }
                         b"REPLCONF" | b"replconf" | b"ReplConf" => {
+
                             let set_args: [Option<&[u8]>; 2] = [
                                 request_parts.get(1).map(|x| x.as_slice()),
                                 request_parts.get(2).map(|x| x.as_slice()),
                             ];
                             match set_args {
                                 [Some(b"GETACK"), Some(b"*")] => {
+                                    let current_offset = self.get_offset_as_bytes();
                                     write_response!(
                                         &mut stream,
                                         &mut response_buffer,
-                                        "REPLCONF ACK 0"
-                                            .split_whitespace()
-                                            .map(|s| s.as_bytes())
-                                            .collect::<Vec<&[u8]>>()
+                                        vec!["REPLCONF".as_bytes(),
+                                             "ACK".as_bytes(),
+                                             current_offset.as_slice()
+                                        ]
                                     );
                                 }
                                 _ => {
                                     eprintln!("[Replica] Unsupported REPLCONF subcommand");
                                 }
                             }
+
+                            // update offset AFTER responding to REPLCONF command
+                            self.increment_offset(command.raw_request_bytes_length);
+                            
                         }
                         _ => {
                             // Handle other commands
@@ -196,6 +232,18 @@ async fn send_and_wait_for_response(stream: &mut TcpStream, message: &str) -> Re
         .expect("Failed to send message to the master");
 
     tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+
+    // let mut buffer: [u8; 1024] = [0; 1024];
+
+    // // read response
+    // let bytes_read = stream.read(&mut buffer).await?;
+
+    // // only convert part of buffer with data read in!
+    // let reply = &buffer[..bytes_read];
+    // println!(
+    //     "[Replica Handshake] Received: {}",
+    //     RESPParser::bytes_to_escaped_string(reply)
+    // );
 
     Ok(())
 }

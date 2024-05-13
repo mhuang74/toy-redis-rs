@@ -5,28 +5,35 @@ pub struct RESPParser;
 
 impl RESPParser {
     /// parse RESP encoded bytes into Vector of UTF strings
-    pub fn parse(request: &[u8]) -> Result<Vec<Command>, Error> {
+    pub fn parse(raw_request_bytes: &[u8]) -> Result<Vec<Command>, Error> {
         // println!("About to parse: {}", RESPParser::bytes_to_escaped_string(request));
 
-        let mut leftover: &[u8] = request;
+        let mut leftover: &[u8] = raw_request_bytes;
         let mut results: Vec<Command> = Vec::new();
 
         let mut count = 0;
         while (!leftover.is_empty()) & (count < 10) {
             count += 1;
             match parse_resp(leftover) {
-                Ok((resp, left)) => {
-                    println!("Parsed into RESP of len {}: {:?}", resp.len(), resp);
-                    // println!("leftover: {}", RESPParser::bytes_to_escaped_string(left));
-
-                    leftover = left;
+                Ok((resp, unparsed)) => {
+                    println!("Parsed into RESP of len {} with unparsed of len {}: {:?}", resp.len(), unparsed.len(), resp);
+                    // println!("unparsed: {}", RESPParser::bytes_to_escaped_string(unparsed));
 
                     match RESPParser::resp_to_decoded_string(resp) {
-                        Ok(request) => results.push(Command { request }),
+                        Ok(request_contents_bytes) => results.push(
+                            // leftover still contains what's parsed
+                            Command { 
+                                request: request_contents_bytes,
+                                raw_request_bytes_length: (leftover.len() - unparsed.len())
+                             }
+                        ),
                         Err(e) => {
                             eprintln!("{}", e);
                         }
                     }
+
+                    // update leftover to what's unparsed
+                    leftover = unparsed;
                 }
                 Err(e) => {
                     eprintln!(

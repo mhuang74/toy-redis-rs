@@ -47,7 +47,7 @@ async fn main() {
             master.hostname, master.port
         );
 
-        let replica = Replica::new(storage.clone());
+        let mut replica = Replica::new(storage.clone());
 
         let _handle = tokio::spawn(async move {
             replica
